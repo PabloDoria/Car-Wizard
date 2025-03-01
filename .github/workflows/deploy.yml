@@ -21,7 +21,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: windows-latest  # ⚡ IMPORTANTE: usa Windows en GitHub Actions
+    runs-on: ubuntu-latest # ⚡ IMPORTANTE: usa Windows en GitHub Actions
 
     steps:
       - name: Checkout repository

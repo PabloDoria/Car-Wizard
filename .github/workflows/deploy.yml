@@ -1,0 +1,65 @@
+name: Deploy Laravel to AWS
+
+on:
+  push:
+    branches:
+      - main  # Se ejecuta en push a main
+      - dev   # También en dev (si quieres)
+  workflow_dispatch:  # Permite ejecución manual
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: car-wizard
+  ECS_CLUSTER: car-wizard-cluster
+  ECS_SERVICE: car-wizard-service
+  ECS_TASK_DEFINITION: ecs/task-definition.json
+  LAMBDA_FUNCTION_NAME: LoadDataLambda
+
+jobs:
+  deploy:
+    runs-on: windows-latest  # ⚡ IMPORTANTE: usa Windows en GitHub Actions
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      - name: Terraform Plan
+        run: terraform -chdir=terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform -chdir=terraform apply -auto-approve tfplan
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push Docker image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          wait-for-service-stability: true

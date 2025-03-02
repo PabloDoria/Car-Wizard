@@ -7,14 +7,13 @@ resource "aws_subnet" "subnet" {
     cidr_block              = "10.0.1.0/24"
     map_public_ip_on_launch = true
 }
-
 resource "aws_security_group" "alb_sg" {
     name_prefix = "alb-sg-"
-    description = "Security Group para el Application Load Balancer"
+    description = "Security Group for ALB"
     vpc_id      = aws_vpc.vpc.id
 
     ingress {
-        description = "Permitir tráfico HTTP desde cualquier lugar"
+        description = "Allow HTTP traffic from anywhere"
         from_port   = 80
         to_port     = 80
         protocol    = "tcp"
@@ -22,7 +21,7 @@ resource "aws_security_group" "alb_sg" {
     }
 
     ingress {
-        description = "Permitir tráfico HTTPS desde cualquier lugar"
+        description = "Allow HTTPS traffic from anywhere"
         from_port   = 443
         to_port     = 443
         protocol    = "tcp"
@@ -30,7 +29,7 @@ resource "aws_security_group" "alb_sg" {
     }
 
     egress {
-        description = "Permitir tráfico de salida"
+        description = "Allow outbound traffic"
         from_port   = 0
         to_port     = 0
         protocol    = "-1"

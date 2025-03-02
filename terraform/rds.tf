@@ -4,32 +4,6 @@ resource "aws_db_subnet_group" "rds_subnet_group" {
     description = "Subnet group for RDS"
 }
 
-resource "aws_security_group" "rds_sg" {
-    name        = "rds-security-group"
-    description = "Allow ECS traffic to RDS"
-    vpc_id      = aws_vpc.vpc.id
-
-    ingress {
-        description = "Allow traffic from ECS"
-        from_port   = 3306
-        to_port     = 3306
-        protocol    = "tcp"
-        security_groups = [aws_security_group.ecs_sg.id]  # Se usa security_groups en lugar de source_security_group_id
-    }
-
-    egress {
-        description = "Allow outbound traffic"
-        from_port   = 0
-        to_port     = 0
-        protocol    = "-1"
-        cidr_blocks = ["0.0.0.0/0"]
-    }
-
-    tags = {
-        Name = "rds-security-group"
-    }
-}
-
 resource "aws_db_instance" "rds" {
     identifier           = "my-rds-instance"
     db_subnet_group_name = aws_db_subnet_group.rds_subnet_group.name
@@ -41,5 +15,5 @@ resource "aws_db_instance" "rds" {
     username           = var.rds_username
     password           = var.rds_password
     skip_final_snapshot = true
-    vpc_security_group_ids = [aws_security_group.rds_sg.id] # Asegura que RDS tenga acceso
+    vpc_security_group_ids = [aws_security_group.rds_sg.id] # Usar el SG definido en networking.tf
 }

@@ -3,7 +3,8 @@ name: Deploy Infrastructure & Laravel App
 on:
   push:
     branches:
-      - main  # Solo ejecuta cuando hay cambios en main
+      - main  
+      - prod
   workflow_dispatch:  # Permite ejecución manual desde GitHub
 
 permissions:

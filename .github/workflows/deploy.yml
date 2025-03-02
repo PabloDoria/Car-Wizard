@@ -92,6 +92,7 @@ jobs:
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           wait-for-service-stability: true
 
+
   notify:
     name: Notify on Failure
     needs: [terraform, deploy]

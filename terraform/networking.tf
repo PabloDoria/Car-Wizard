@@ -26,7 +26,7 @@ resource "aws_security_group" "rds_sg" {
 
 resource "aws_security_group" "ecs_sg" {
     name        = "ecs-security-group"
-    description = "Allow traffic from ALB and ECS tasks"
+    description = "Allow traffic from ALB to ECS tasks"
     vpc_id      = aws_vpc.vpc.id
 
     ingress {
@@ -35,14 +35,6 @@ resource "aws_security_group" "ecs_sg" {
         to_port     = 80
         protocol    = "tcp"
         security_groups = [aws_security_group.alb_sg.id]
-    }
-
-    ingress {
-        description = "Allow traffic from ECS to RDS"
-        from_port   = 3306
-        to_port     = 3306
-        protocol    = "tcp"
-        security_groups = [aws_security_group.rds_sg.id]
     }
 
     egress {
@@ -57,3 +49,4 @@ resource "aws_security_group" "ecs_sg" {
         Name = "ecs-security-group"
     }
 }
+

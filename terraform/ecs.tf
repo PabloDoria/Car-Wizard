@@ -30,6 +30,10 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_logs_policy" {
     policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
 }
 
+resource "aws_ecs_cluster" "ecs_cluster" {
+    name = "car-wizard-cluster"
+}
+
 
 resource "aws_ecs_task_definition" "ecs_task" {
     family                   = "car-wizard-task"

@@ -31,7 +31,7 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_logs_policy" {
 }
 
 resource "aws_ecs_cluster" "ecs_cluster" {
-    name = "car-wizard-cluster"
+    name = "car-wizard-cluster" # 1
 }
 
 

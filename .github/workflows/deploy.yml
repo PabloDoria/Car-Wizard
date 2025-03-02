@@ -1,11 +1,10 @@
-name: Deploy Laravel to AWS
+name: Deploy Infrastructure & Laravel App
 
 on:
   push:
     branches:
-      - main  # Se ejecuta en push a main
-      - dev   # También en dev (si quieres)
-  workflow_dispatch:  # Permite ejecución manual
+      - main  # Solo ejecuta cuando hay cambios en main
+  workflow_dispatch:  # Permite ejecución manual desde GitHub
 
 permissions:
   id-token: write
@@ -20,8 +19,9 @@ env:
   LAMBDA_FUNCTION_NAME: LoadDataLambda
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest # ⚡ IMPORTANTE: usa Windows en GitHub Actions
+  terraform:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -31,41 +31,53 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
       - name: Terraform Init
-        run: terraform -chdir=terraform init
+        working-directory: terraform
+        run: terraform init
 
       - name: Terraform Plan
-        run: terraform -chdir=terraform plan -out=tfplan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
-        run: terraform -chdir=terraform apply -auto-approve tfplan
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+  deploy:
+    name: Deploy Laravel to ECS
+    needs: terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Get AWS Account ID
-        shell: pwsh
-        run: |
-          $AWS_ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
-          echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" | Out-File -FilePath $env:GITHUB_ENV -Append
-
       - name: Build and push Docker image
         env:
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          ECR_REPOSITORY: "car-wizard"
           IMAGE_TAG: ${{ github.sha }}
-        shell: pwsh
         run: |
-          $ECR_REGISTRY="${env:AWS_ACCOUNT_ID}.dkr.ecr.${env:AWS_REGION}.amazonaws.com"
-          docker build -t $ECR_REGISTRY/$env:ECR_REPOSITORY:$env:IMAGE_TAG -f docker/Dockerfile .
-          docker tag $ECR_REGISTRY/$env:ECR_REPOSITORY:$env:IMAGE_TAG $ECR_REGISTRY/$env:ECR_REPOSITORY:$env:IMAGE_TAG
-          docker push $ECR_REGISTRY/$env:ECR_REPOSITORY:$env:IMAGE_TAG
+          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
+      - name: Update ECS Task Definition
+        run: |
+          sed -i 's|<IMAGE>|'"$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"'|g' $ECS_TASK_DEFINITION
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -74,3 +86,16 @@ jobs:
           service: ${{ env.ECS_SERVICE }}
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           wait-for-service-stability: true
+
+  notify:
+    name: Notify on Failure
+    needs: [terraform, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send failure notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data '{"text":"🚨 *Deploy Failed!*"}' $SLACK_WEBHOOK_URL

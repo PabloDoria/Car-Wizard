@@ -9,7 +9,6 @@ resource "aws_subnet" "subnet_1" {
     map_public_ip_on_launch = true
 }
 
-
 resource "aws_subnet" "subnet_2" {
     vpc_id                  = aws_vpc.vpc.id
     cidr_block              = "10.0.2.0/24"
@@ -30,6 +29,21 @@ resource "aws_subnet" "subnet_4" {
     availability_zone       = "us-east-1d"
     map_public_ip_on_launch = true
 }
+
+resource "aws_subnet" "subnet_5" {
+    vpc_id                  = aws_vpc.vpc.id
+    cidr_block              = "10.0.5.0/24"
+    availability_zone       = "us-east-1e"
+    map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "subnet_6" {
+    vpc_id                  = aws_vpc.vpc.id
+    cidr_block              = "10.0.6.0/24"
+    availability_zone       = "us-east-1f"
+    map_public_ip_on_launch = true
+}
+
 
 resource "aws_security_group" "alb_sg" {
     name_prefix = "alb-sg-"

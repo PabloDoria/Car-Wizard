@@ -39,29 +39,38 @@ resource "aws_ecs_task_definition" "ecs_task" {
     family                   = "car-wizard-task"
     network_mode             = "awsvpc"
     requires_compatibilities = ["FARGATE"]
-    execution_role_arn       = aws_iam_role.ecs_execution_role.arn 
+    execution_role_arn       = aws_iam_role.ecs_execution_role.arn
     cpu                      = "256"
     memory                   = "512"
-    
+
     container_definitions = jsonencode([
-    {
-        name      = "car-wizard-container",
-        image     = "${aws_ecr_repository.ecr_repo.repository_url}:latest",
-        cpu       = 256,
-        memory    = 512,
-        essential = true,
-        networkMode = "awsvpc",
+        {
+        name      = "car-wizard-container"
+        image     = "${aws_ecr_repository.ecr_repo.repository_url}:latest"
+        cpu       = 256
+        memory    = 512
+        essential = true
+
+        portMappings = [
+            {
+            containerPort = 80
+            hostPort      = 80
+            protocol      = "tcp"
+            }
+        ]
+
         logConfiguration = {
-            logDriver = "awslogs",
+            logDriver = "awslogs"
             options = {
-            "awslogs-group" = "/ecs/car-wizard"
-            "awslogs-region" = "us-east-1"
+            "awslogs-group"         = "/ecs/car-wizard"
+            "awslogs-region"        = "us-east-1"
             "awslogs-stream-prefix" = "ecs"
             }
         }
         }
     ])
 }
+
 
 resource "aws_ecs_service" "ecs_service" {
     name            = "car-wizard-service"
@@ -78,7 +87,7 @@ resource "aws_ecs_service" "ecs_service" {
 
     load_balancer {
         target_group_arn = aws_lb_target_group.alb_target.arn
-        container_name   = "car-wizard-container"
-        container_port   = 80
+        container_name   = "car-wizard-container" 
+        container_port   = 80  
     }
 }

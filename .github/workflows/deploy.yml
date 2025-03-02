@@ -40,6 +40,10 @@ jobs:
         working-directory: terraform
         run: terraform init
 
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
@@ -62,14 +66,19 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
+      - name: Get AWS Account ID
+        run: echo "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
+
+
+
       - name: Build and push Docker image
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
 
       - name: Update ECS Task Definition
         run: |

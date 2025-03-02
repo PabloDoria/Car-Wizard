@@ -1,35 +1,49 @@
-resource "aws_ecs_cluster" "ecs_cluster" {
-    name = var.ecs_cluster_name
+resource "aws_iam_role" "ecs_execution_role" {
+    name = "ecsTaskExecutionRole"
+
+    assume_role_policy = jsonencode({
+        Version = "2012-10-17",
+        Statement = [
+        {
+            Effect = "Allow",
+            Principal = {
+            Service = "ecs-tasks.amazonaws.com"
+            },
+            Action = "sts:AssumeRole"
+        }
+        ]
+    })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
+    role       = aws_iam_role.ecs_execution_role.name
+    policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
 resource "aws_ecs_task_definition" "ecs_task" {
     family                   = "car-wizard-task"
-    requires_compatibilities = ["FARGATE"]
     network_mode             = "awsvpc"
-    memory                   = "512"
+    requires_compatibilities = ["FARGATE"]
+    execution_role_arn       = aws_iam_role.ecs_execution_role.arn  # 🚀 Agregamos esto
     cpu                      = "256"
-
+    memory                   = "512"
+    
     container_definitions = jsonencode([
     {
-        name      = "car-wizard"
-        image     = "${aws_ecr_repository.ecr_repo.repository_url}:latest"
-        cpu       = 256
-        memory    = 512
-        essential = true
-        portMappings = [
-            {
-            containerPort = 80
-            hostPort      = 80
+        name      = "car-wizard-container",
+        image     = "${aws_ecr_repository.ecr_repo.repository_url}:latest",
+        cpu       = 256,
+        memory    = 512,
+        essential = true,
+        networkMode = "awsvpc",
+        logConfiguration = {
+            logDriver = "awslogs",
+            options = {
+            "awslogs-group" = "/ecs/car-wizard"
+            "awslogs-region" = "us-east-1"
+            "awslogs-stream-prefix" = "ecs"
             }
-        ]
+        }
         }
     ])
-}
-
-resource "aws_ecs_service" "ecs_service" {
-    name            = var.ecs_service_name
-    cluster         = aws_ecs_cluster.ecs_cluster.id
-    task_definition = aws_ecs_task_definition.ecs_task.arn
-    desired_count   = 1
-    launch_type     = "FARGATE"
 }

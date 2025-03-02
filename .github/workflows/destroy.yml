@@ -1,0 +1,48 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:  # Permite ejecución manual desde GitHub
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  terraform-destroy:
+    name: Destroy Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: terraform destroy -auto-approve
+
+      - name: Force Cleanup (Optional)
+        run: |
+          aws ecs delete-cluster --cluster car-wizard-cluster || true
+          aws ecr delete-repository --repository-name car-wizard --force || true
+          aws lambda delete-function --function-name LoadDataLambda || true
+          aws rds delete-db-instance --db-instance-identifier carwizarddb --skip-final-snapshot || true
+          aws ec2 delete-security-group --group-id $(aws ec2 describe-security-groups --filters Name=group-name,Values=alb-security-group --query 'SecurityGroups[0].GroupId' --output text) || true
+          aws ec2 delete-subnet --subnet-id $(aws ec2 describe-subnets --filters Name=tag:Name,Values=subnet-1 --query 'Subnets[0].SubnetId' --output text) || true
+          aws ec2 delete-subnet --subnet-id $(aws ec2 describe-subnets --filters Name=tag:Name,Values=subnet-2 --query 'Subnets[0].SubnetId' --output text) || true
+          aws ec2 delete-vpc --vpc-id $(aws ec2 describe-vpcs --filters Name=tag:Name,Values=car-wizard-vpc --query 'Vpcs[0].VpcId' --output text) || true

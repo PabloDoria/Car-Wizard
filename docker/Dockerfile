@@ -16,15 +16,16 @@ RUN apt-get update && apt-get install -y \
 # Instala Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Copia los archivos de la aplicación al contenedor
+# Copia los archivos de la aplicación Laravel al contenedor
 WORKDIR /var/www/html
-COPY app/ ./
+COPY app /var/www/html
 
-# Instala dependencias de Laravel
-RUN composer install --no-dev --optimize-autoloader
+# Instala dependencias de Laravel (si composer.json existe)
+RUN if [ -f "composer.json" ]; then composer install --no-dev --optimize-autoloader; fi
 
 # Establece permisos correctos
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+RUN chmod -R 777 storage bootstrap/cache
 
 # Exponer el puerto 80 para Apache
 EXPOSE 80

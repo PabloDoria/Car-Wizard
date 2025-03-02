@@ -24,7 +24,7 @@ resource "aws_ecs_task_definition" "ecs_task" {
     family                   = "car-wizard-task"
     network_mode             = "awsvpc"
     requires_compatibilities = ["FARGATE"]
-    execution_role_arn       = aws_iam_role.ecs_execution_role.arn  # 🚀 Agregamos esto
+    execution_role_arn       = aws_iam_role.ecs_execution_role.arn 
     cpu                      = "256"
     memory                   = "512"
     

@@ -75,6 +75,14 @@ resource "aws_security_group" "lambda_sg" {
     description = "Security group for Lambda function"
     vpc_id      = aws_vpc.vpc.id
 
+    ingress {
+        description     = "Allow MySQL traffic to RDS"
+        from_port       = 3306
+        to_port         = 3306
+        protocol        = "tcp"
+        security_groups = [aws_security_group.rds_sg.id]
+    }
+
     egress {
         from_port   = 0
         to_port     = 0
@@ -83,7 +91,9 @@ resource "aws_security_group" "lambda_sg" {
     }
 
     tags = {
-        Name = "lambda-security-group"
+        Name        = "lambda-security-group"
+        Environment = "production"
+        Project     = "car-wizard"
     }
 }
 

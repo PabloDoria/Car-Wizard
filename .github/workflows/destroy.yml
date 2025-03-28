@@ -10,6 +10,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
+  VPC_NAME: "car-wizard-vpc"
 
 jobs:
   terraform-destroy:
@@ -105,15 +106,139 @@ jobs:
         run: |
           echo "Limpiando repositorio ECR..."
           REPO_NAME="car-wizard"
-          # Eliminar todas las imágenes
           aws ecr list-images --repository-name $REPO_NAME --query 'imageIds[*]' --output json | \
           jq -r '.[] | [.imageDigest] | @tsv' | \
           while read digest; do
             aws ecr batch-delete-image --repository-name $REPO_NAME --image-ids imageDigest=$digest || true
           done
-          
-          # Eliminar el repositorio
           aws ecr delete-repository --repository-name $REPO_NAME --force || true
+
+      - name: Force Delete RDS Resources
+        run: |
+          echo "Eliminando recursos de RDS..."
+          
+          # Eliminar instancia RDS
+          DB_IDENTIFIER="car-wizard-db"
+          echo "Eliminando instancia RDS $DB_IDENTIFIER..."
+          aws rds delete-db-instance --db-instance-identifier $DB_IDENTIFIER --skip-final-snapshot --delete-automated-backups || true
+          
+          # Esperar a que la instancia se elimine (máximo 20 minutos)
+          echo "Esperando a que la instancia RDS se elimine..."
+          timeout=1200
+          while [ $timeout -gt 0 ]; do
+            DB_STATUS=$(aws rds describe-db-instances --db-instance-identifier $DB_IDENTIFIER --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo "deleted")
+            if [ "$DB_STATUS" == "deleted" ] || [ "$DB_STATUS" == "None" ]; then
+              echo "Instancia RDS eliminada"
+              break
+            fi
+            echo "Estado de RDS: $DB_STATUS ($timeout segundos restantes)"
+            sleep 30
+            timeout=$((timeout-30))
+          done
+          
+          # Eliminar subnet groups
+          echo "Eliminando DB subnet groups..."
+          aws rds delete-db-subnet-group --db-subnet-group-name car-wizard-rds-subnet-group || true
+          
+          # Eliminar parameter groups
+          echo "Eliminando DB parameter groups..."
+          aws rds delete-db-parameter-group --db-parameter-group-name $(aws rds describe-db-parameter-groups --query 'DBParameterGroups[?starts_with(DBParameterGroupName, `car-wizard-params-`)].DBParameterGroupName' --output text) || true
+
+      - name: Force Delete IAM Resources
+        run: |
+          echo "Eliminando recursos de IAM..."
+          
+          # Lista de roles a eliminar
+          ROLES_TO_DELETE=(
+            "GHActionsRole"
+            "LambdaExecutionRole"
+            "ecsTaskExecutionRole"
+          )
+          
+          for ROLE_NAME in "${ROLES_TO_DELETE[@]}"; do
+            echo "Procesando rol: $ROLE_NAME"
+            
+            # Obtener y eliminar políticas inline
+            INLINE_POLICIES=$(aws iam list-role-policies --role-name $ROLE_NAME --query 'PolicyNames[*]' --output text) || true
+            for POLICY in $INLINE_POLICIES; do
+              echo "Eliminando política inline $POLICY del rol $ROLE_NAME"
+              aws iam delete-role-policy --role-name $ROLE_NAME --policy-name $POLICY || true
+            done
+            
+            # Desasociar políticas administradas
+            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[*].PolicyArn' --output text) || true
+            for POLICY_ARN in $ATTACHED_POLICIES; do
+              echo "Desvinculando política $POLICY_ARN del rol $ROLE_NAME"
+              aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $POLICY_ARN || true
+            done
+            
+            # Eliminar el rol
+            echo "Eliminando rol $ROLE_NAME"
+            aws iam delete-role --role-name $ROLE_NAME || true
+          done
+
+      - name: Force Delete Network Resources
+        run: |
+          echo "Eliminando recursos de red..."
+          
+          # Obtener VPC ID
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${VPC_NAME}" --query 'Vpcs[0].VpcId' --output text)
+          
+          if [ ! -z "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            echo "Eliminando recursos asociados a VPC $VPC_ID..."
+            
+            # Eliminar NAT Gateways si existen
+            NAT_GATEWAYS=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" --query 'NatGateways[*].NatGatewayId' --output text) || true
+            for nat in $NAT_GATEWAYS; do
+              echo "Eliminando NAT Gateway $nat..."
+              aws ec2 delete-nat-gateway --nat-gateway-id $nat || true
+            done
+            
+            # Eliminar Endpoints
+            VPC_ENDPOINTS=$(aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query 'VpcEndpoints[*].VpcEndpointId' --output text) || true
+            for endpoint in $VPC_ENDPOINTS; do
+              echo "Eliminando VPC Endpoint $endpoint..."
+              aws ec2 delete-vpc-endpoints --vpc-endpoint-ids $endpoint || true
+            done
+            
+            # Eliminar Security Groups (excepto el default)
+            SEC_GROUPS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=!default" --query 'SecurityGroups[*].GroupId' --output text) || true
+            for sg in $SEC_GROUPS; do
+              echo "Eliminando Security Group $sg..."
+              aws ec2 delete-security-group --group-id $sg || true
+            done
+            
+            # Eliminar Route Tables (excepto la principal)
+            ROUTE_TABLES=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text) || true
+            for rt in $ROUTE_TABLES; do
+              echo "Eliminando Route Table $rt..."
+              # Primero desasociar
+              ASSOC_IDS=$(aws ec2 describe-route-tables --route-table-ids $rt --query 'RouteTables[*].Associations[*].RouteTableAssociationId' --output text) || true
+              for assoc in $ASSOC_IDS; do
+                aws ec2 disassociate-route-table --association-id $assoc || true
+              done
+              aws ec2 delete-route-table --route-table-id $rt || true
+            done
+            
+            # Eliminar Subnets
+            SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text) || true
+            for subnet in $SUBNETS; do
+              echo "Eliminando Subnet $subnet..."
+              aws ec2 delete-subnet --subnet-id $subnet || true
+            done
+            
+            # Eliminar Internet Gateway
+            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[*].InternetGatewayId' --output text) || true
+            if [ ! -z "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
+              echo "Desvinculando y eliminando Internet Gateway $IGW_ID..."
+              aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
+              aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
+            fi
+            
+            # Finalmente eliminar la VPC
+            echo "Eliminando VPC $VPC_ID..."
+            aws ec2 delete-vpc --vpc-id $VPC_ID || true
+          fi
 
       - name: Terraform Destroy
         working-directory: terraform

@@ -144,39 +144,6 @@ jobs:
           echo "Eliminando DB parameter groups..."
           aws rds delete-db-parameter-group --db-parameter-group-name $(aws rds describe-db-parameter-groups --query 'DBParameterGroups[?starts_with(DBParameterGroupName, `car-wizard-params-`)].DBParameterGroupName' --output text) || true
 
-      - name: Force Delete IAM Resources
-        run: |
-          echo "Eliminando recursos de IAM..."
-          
-          # Lista de roles a eliminar
-          ROLES_TO_DELETE=(
-            "GHActionsRole"
-            "LambdaExecutionRole"
-            "ecsTaskExecutionRole"
-          )
-          
-          for ROLE_NAME in "${ROLES_TO_DELETE[@]}"; do
-            echo "Procesando rol: $ROLE_NAME"
-            
-            # Obtener y eliminar políticas inline
-            INLINE_POLICIES=$(aws iam list-role-policies --role-name $ROLE_NAME --query 'PolicyNames[*]' --output text) || true
-            for POLICY in $INLINE_POLICIES; do
-              echo "Eliminando política inline $POLICY del rol $ROLE_NAME"
-              aws iam delete-role-policy --role-name $ROLE_NAME --policy-name $POLICY || true
-            done
-            
-            # Desasociar políticas administradas
-            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[*].PolicyArn' --output text) || true
-            for POLICY_ARN in $ATTACHED_POLICIES; do
-              echo "Desvinculando política $POLICY_ARN del rol $ROLE_NAME"
-              aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $POLICY_ARN || true
-            done
-            
-            # Eliminar el rol
-            echo "Eliminando rol $ROLE_NAME"
-            aws iam delete-role --role-name $ROLE_NAME || true
-          done
-
       - name: Force Delete Network Resources
         run: |
           echo "Eliminando recursos de red..."
@@ -240,8 +207,65 @@ jobs:
             aws ec2 delete-vpc --vpc-id $VPC_ID || true
           fi
 
+      - name: Force Delete Service Roles
+        run: |
+          echo "Eliminando roles de servicio..."
+          
+          # Lista de roles de servicio (excluyendo GHActionsRole)
+          SERVICE_ROLES=(
+            "LambdaExecutionRole"
+            "ecsTaskExecutionRole"
+          )
+          
+          for ROLE_NAME in "${SERVICE_ROLES[@]}"; do
+            echo "Procesando rol: $ROLE_NAME"
+            
+            # Obtener y eliminar políticas inline
+            INLINE_POLICIES=$(aws iam list-role-policies --role-name $ROLE_NAME --query 'PolicyNames[*]' --output text) || true
+            for POLICY in $INLINE_POLICIES; do
+              echo "Eliminando política inline $POLICY del rol $ROLE_NAME"
+              aws iam delete-role-policy --role-name $ROLE_NAME --policy-name $POLICY || true
+            done
+            
+            # Desasociar políticas administradas
+            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[*].PolicyArn' --output text) || true
+            for POLICY_ARN in $ATTACHED_POLICIES; do
+              echo "Desvinculando política $POLICY_ARN del rol $ROLE_NAME"
+              aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $POLICY_ARN || true
+            done
+            
+            # Eliminar el rol
+            echo "Eliminando rol $ROLE_NAME"
+            aws iam delete-role --role-name $ROLE_NAME || true
+          done
+
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve
         env:
           TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
+
+      - name: Force Delete GitHub Actions Role
+        if: always()  # Asegurarse de que este paso siempre se ejecute
+        run: |
+          echo "Eliminando rol de GitHub Actions..."
+          
+          ROLE_NAME="GHActionsRole"
+          
+          # Obtener y eliminar políticas inline
+          INLINE_POLICIES=$(aws iam list-role-policies --role-name $ROLE_NAME --query 'PolicyNames[*]' --output text) || true
+          for POLICY in $INLINE_POLICIES; do
+            echo "Eliminando política inline $POLICY del rol $ROLE_NAME"
+            aws iam delete-role-policy --role-name $ROLE_NAME --policy-name $POLICY || true
+          done
+          
+          # Desasociar políticas administradas
+          ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[*].PolicyArn' --output text) || true
+          for POLICY_ARN in $ATTACHED_POLICIES; do
+            echo "Desvinculando política $POLICY_ARN del rol $ROLE_NAME"
+            aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $POLICY_ARN || true
+          done
+          
+          # Eliminar el rol
+          echo "Eliminando rol $ROLE_NAME"
+          aws iam delete-role --role-name $ROLE_NAME || true

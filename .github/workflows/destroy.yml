@@ -33,36 +33,79 @@ jobs:
         working-directory: terraform
         run: terraform init
 
-      - name: Delete ECS Services
+      - name: Force Delete ECS Resources
         run: |
+          echo "Eliminando servicios ECS..."
           CLUSTER_NAME="car-wizard-cluster"
           SERVICE_NAME="car-wizard-service"
           
           # Escalar el servicio a 0
           aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --desired-count 0 || true
           
-          # Esperar a que los tasks se detengan
-          aws ecs wait services-inactive --cluster $CLUSTER_NAME --services $SERVICE_NAME || true
+          # Esperar a que los tasks se detengan (máximo 5 minutos)
+          timeout=300
+          while [ $timeout -gt 0 ]; do
+            TASKS=$(aws ecs list-tasks --cluster $CLUSTER_NAME --service-name $SERVICE_NAME --query 'taskArns' --output text)
+            if [ -z "$TASKS" ] || [ "$TASKS" == "None" ]; then
+              break
+            fi
+            echo "Esperando que los tasks se detengan... ($timeout segundos restantes)"
+            sleep 10
+            timeout=$((timeout-10))
+          done
+          
+          # Forzar eliminación de tareas restantes
+          TASKS=$(aws ecs list-tasks --cluster $CLUSTER_NAME --query 'taskArns[]' --output text) || true
+          if [ ! -z "$TASKS" ] && [ "$TASKS" != "None" ]; then
+            echo "Forzando eliminación de tareas..."
+            for TASK in $TASKS; do
+              aws ecs stop-task --cluster $CLUSTER_NAME --task $TASK --reason "Destroy infrastructure" || true
+            done
+          fi
           
           # Eliminar el servicio
+          echo "Eliminando servicio ECS..."
           aws ecs delete-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force || true
+          
+          # Eliminar el cluster
+          echo "Eliminando cluster ECS..."
+          aws ecs delete-cluster --cluster $CLUSTER_NAME || true
 
-      - name: Delete Lambda Function
+      - name: Force Delete Lambda Resources
         run: |
+          echo "Eliminando recursos de Lambda..."
           # Eliminar permisos y triggers primero
           aws events remove-targets --rule trigger-car-data-update --ids TriggerLambda || true
           aws events delete-rule --name trigger-car-data-update || true
           aws lambda delete-function --function-name LoadDataLambda || true
 
-      - name: Terraform Destroy
-        working-directory: terraform
-        run: terraform destroy -auto-approve
+      - name: Force Delete Load Balancer
+        run: |
+          echo "Eliminando Load Balancer..."
+          # Obtener ARN del ALB
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text) || true
+          if [ ! -z "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
+            # Eliminar listeners
+            LISTENERS=$(aws elbv2 describe-listeners --load-balancer-arn $ALB_ARN --query 'Listeners[*].ListenerArn' --output text) || true
+            for listener in $LISTENERS; do
+              aws elbv2 delete-listener --listener-arn $listener || true
+            done
+            # Eliminar el ALB
+            aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN || true
+          fi
+          
+          # Eliminar target groups
+          TG_ARN=$(aws elbv2 describe-target-groups --names car-wizard-tg --query 'TargetGroups[0].TargetGroupArn' --output text) || true
+          if [ ! -z "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+            aws elbv2 delete-target-group --target-group-arn $TG_ARN || true
+          fi
 
       - name: Clean up ECR Repository
         if: always()
         run: |
-          # Eliminar todas las imágenes del repositorio
+          echo "Limpiando repositorio ECR..."
           REPO_NAME="car-wizard"
+          # Eliminar todas las imágenes
           aws ecr list-images --repository-name $REPO_NAME --query 'imageIds[*]' --output json | \
           jq -r '.[] | [.imageDigest] | @tsv' | \
           while read digest; do
@@ -71,3 +114,9 @@ jobs:
           
           # Eliminar el repositorio
           aws ecr delete-repository --repository-name $REPO_NAME --force || true
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: terraform destroy -auto-approve
+        env:
+          TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}

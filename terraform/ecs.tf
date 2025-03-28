@@ -79,15 +79,28 @@ resource "aws_ecs_service" "ecs_service" {
     desired_count   = 1
     launch_type     = "FARGATE"
 
+    force_new_deployment = true
+    
+    deployment_maximum_percent         = 200
+    deployment_minimum_healthy_percent = 100
+
     network_configuration {
         subnets          = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
-        security_groups  = [aws_security_group.alb_sg.id]
+        security_groups  = [aws_security_group.ecs_tasks_sg.id]
         assign_public_ip = true
     }
 
     load_balancer {
         target_group_arn = aws_lb_target_group.alb_target.arn
-        container_name   = "car-wizard-container" 
-        container_port   = 80  
+        container_name   = "car-wizard-container"
+        container_port   = 80
+    }
+
+    lifecycle {
+        create_before_destroy = true
+        ignore_changes = [
+            task_definition,
+            desired_count
+        ]
     }
 }

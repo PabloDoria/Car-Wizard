@@ -1,10 +1,7 @@
 name: Deploy Infrastructure & Laravel App
 
 on:
-  push:
-    branches:
-      - main  # Solo ejecuta cuando hay cambios en main
-  workflow_dispatch:  # Permite ejecución manual desde GitHub
+  workflow_dispatch:  # Solo permite ejecución manual desde GitHub
 
 permissions:
   id-token: write
@@ -17,6 +14,8 @@ env:
   ECS_SERVICE: car-wizard-service
   ECS_TASK_DEFINITION: ecs/task-definition.json
   LAMBDA_FUNCTION_NAME: LoadDataLambda
+  TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
+  TF_VAR_github_repo: ${{ github.repository }}
 
 jobs:
   terraform:
@@ -46,7 +45,7 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve tfplan
 
   deploy:
     name: Deploy Laravel to ECS
@@ -69,8 +68,6 @@ jobs:
       - name: Get AWS Account ID
         run: echo "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
 
-
-
       - name: Build and push Docker image
         env:
           IMAGE_TAG: ${{ github.sha }}
@@ -78,7 +75,6 @@ jobs:
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
 
       - name: Update ECS Task Definition
         run: |
@@ -91,7 +87,6 @@ jobs:
           service: ${{ env.ECS_SERVICE }}
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           wait-for-service-stability: true
-
 
   notify:
     name: Notify on Failure

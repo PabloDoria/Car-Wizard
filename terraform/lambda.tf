@@ -15,6 +15,10 @@ resource "aws_iam_role" "lambda_role" {
             }
         ]
     })
+
+    lifecycle {
+        create_before_destroy = true
+    }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {

@@ -9,6 +9,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
+  TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
 
 jobs:
   terraform-destroy:
@@ -32,17 +33,41 @@ jobs:
         working-directory: terraform
         run: terraform init
 
+      - name: Delete ECS Services
+        run: |
+          CLUSTER_NAME="car-wizard-cluster"
+          SERVICE_NAME="car-wizard-service"
+          
+          # Escalar el servicio a 0
+          aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --desired-count 0 || true
+          
+          # Esperar a que los tasks se detengan
+          aws ecs wait services-inactive --cluster $CLUSTER_NAME --services $SERVICE_NAME || true
+          
+          # Eliminar el servicio
+          aws ecs delete-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force || true
+
+      - name: Delete Lambda Function
+        run: |
+          # Eliminar permisos y triggers primero
+          aws events remove-targets --rule trigger-car-data-update --ids TriggerLambda || true
+          aws events delete-rule --name trigger-car-data-update || true
+          aws lambda delete-function --function-name LoadDataLambda || true
+
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve
 
-      - name: Force Cleanup (Optional)
+      - name: Clean up ECR Repository
+        if: always()
         run: |
-          aws ecs delete-cluster --cluster car-wizard-cluster || true
-          aws ecr delete-repository --repository-name car-wizard --force || true
-          aws lambda delete-function --function-name LoadDataLambda || true
-          aws rds delete-db-instance --db-instance-identifier carwizarddb --skip-final-snapshot || true
-          aws ec2 delete-security-group --group-id $(aws ec2 describe-security-groups --filters Name=group-name,Values=alb-security-group --query 'SecurityGroups[0].GroupId' --output text) || true
-          aws ec2 delete-subnet --subnet-id $(aws ec2 describe-subnets --filters Name=tag:Name,Values=subnet-1 --query 'Subnets[0].SubnetId' --output text) || true
-          aws ec2 delete-subnet --subnet-id $(aws ec2 describe-subnets --filters Name=tag:Name,Values=subnet-2 --query 'Subnets[0].SubnetId' --output text) || true
-          aws ec2 delete-vpc --vpc-id $(aws ec2 describe-vpcs --filters Name=tag:Name,Values=car-wizard-vpc --query 'Vpcs[0].VpcId' --output text) || true
+          # Eliminar todas las imágenes del repositorio
+          REPO_NAME="car-wizard"
+          aws ecr list-images --repository-name $REPO_NAME --query 'imageIds[*]' --output json | \
+          jq -r '.[] | [.imageDigest] | @tsv' | \
+          while read digest; do
+            aws ecr batch-delete-image --repository-name $REPO_NAME --image-ids imageDigest=$digest || true
+          done
+          
+          # Eliminar el repositorio
+          aws ecr delete-repository --repository-name $REPO_NAME --force || true

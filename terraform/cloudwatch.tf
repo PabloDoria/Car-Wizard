@@ -7,6 +7,10 @@ resource "aws_cloudwatch_log_group" "ecs_logs" {
         Environment = "production"
         Project     = "car-wizard"
     }
+
+    lifecycle {
+        create_before_destroy = true
+    }
 }
 
 resource "aws_cloudwatch_log_group" "lambda_logs" {
@@ -17,6 +21,11 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
         Name        = "car-wizard-lambda-logs"
         Environment = "production"
         Project     = "car-wizard"
+    }
+
+    lifecycle {
+        create_before_destroy = true
+        prevent_destroy = false
     }
 }
 

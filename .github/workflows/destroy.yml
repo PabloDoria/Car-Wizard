@@ -24,7 +24,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -244,28 +244,3 @@ jobs:
         run: terraform destroy -auto-approve
         env:
           TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
-
-      - name: Force Delete GitHub Actions Role
-        if: always()  # Asegurarse de que este paso siempre se ejecute
-        run: |
-          echo "Eliminando rol de GitHub Actions..."
-          
-          ROLE_NAME="GHActionsRole"
-          
-          # Obtener y eliminar políticas inline
-          INLINE_POLICIES=$(aws iam list-role-policies --role-name $ROLE_NAME --query 'PolicyNames[*]' --output text) || true
-          for POLICY in $INLINE_POLICIES; do
-            echo "Eliminando política inline $POLICY del rol $ROLE_NAME"
-            aws iam delete-role-policy --role-name $ROLE_NAME --policy-name $POLICY || true
-          done
-          
-          # Desasociar políticas administradas
-          ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[*].PolicyArn' --output text) || true
-          for POLICY_ARN in $ATTACHED_POLICIES; do
-            echo "Desvinculando política $POLICY_ARN del rol $ROLE_NAME"
-            aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $POLICY_ARN || true
-          done
-          
-          # Eliminar el rol
-          echo "Eliminando rol $ROLE_NAME"
-          aws iam delete-role --role-name $ROLE_NAME || true

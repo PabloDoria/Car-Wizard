@@ -15,7 +15,6 @@ env:
   ECS_TASK_DEFINITION: ecs/task-definition.json
   LAMBDA_FUNCTION_NAME: LoadDataLambda
   TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
-  TF_VAR_github_repo: ${{ github.repository }}
 
 jobs:
   terraform:
@@ -29,7 +28,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -59,7 +58,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR

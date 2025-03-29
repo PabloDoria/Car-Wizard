@@ -25,6 +25,11 @@ resource "aws_iam_role" "github_actions" {
             }
         ]
     })
+
+    # Importante: No permitir que Terraform destruya este rol
+    lifecycle {
+        prevent_destroy = true
+    }
 }
 
 resource "aws_iam_role_policy" "github_actions_policy" {
@@ -53,6 +58,11 @@ resource "aws_iam_role_policy" "github_actions_policy" {
             }
         ]
     })
+
+    # Importante: No permitir que Terraform destruya esta política
+    lifecycle {
+        prevent_destroy = true
+    }
 }
 
 # Crear el proveedor OIDC si no existe
@@ -68,4 +78,9 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
     thumbprint_list = [
         "6938fd4d98bab03faadb97b34396831e3780aea1"  # GitHub's thumbprint
     ]
+
+    # Importante: No permitir que Terraform destruya este proveedor
+    lifecycle {
+        prevent_destroy = true
+    }
 } 

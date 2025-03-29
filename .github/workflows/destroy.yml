@@ -40,37 +40,55 @@ jobs:
           CLUSTER_NAME="car-wizard-cluster"
           SERVICE_NAME="car-wizard-service"
           
-          # Escalar el servicio a 0
-          aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --desired-count 0 || true
+          # Verificar si el cluster existe
+          CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters $CLUSTER_NAME --query 'clusters[0].status' --output text 2>/dev/null || echo "INACTIVE")
           
-          # Esperar a que los tasks se detengan (máximo 5 minutos)
-          timeout=300
-          while [ $timeout -gt 0 ]; do
-            TASKS=$(aws ecs list-tasks --cluster $CLUSTER_NAME --service-name $SERVICE_NAME --query 'taskArns' --output text)
-            if [ -z "$TASKS" ] || [ "$TASKS" == "None" ]; then
-              break
+          if [ "$CLUSTER_EXISTS" != "INACTIVE" ]; then
+            echo "Cluster encontrado, procediendo con la eliminación de servicios..."
+            
+            # Verificar si el servicio existe
+            SERVICE_EXISTS=$(aws ecs list-services --cluster $CLUSTER_NAME --query 'serviceArns[0]' --output text 2>/dev/null || echo "")
+            
+            if [ ! -z "$SERVICE_EXISTS" ] && [ "$SERVICE_EXISTS" != "None" ]; then
+              echo "Servicio encontrado, procediendo con la eliminación..."
+              
+              # Escalar el servicio a 0
+              aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --desired-count 0 || true
+              
+              # Esperar a que los tasks se detengan (máximo 5 minutos)
+              timeout=300
+              while [ $timeout -gt 0 ]; do
+                TASKS=$(aws ecs list-tasks --cluster $CLUSTER_NAME --service-name $SERVICE_NAME --query 'taskArns' --output text)
+                if [ -z "$TASKS" ] || [ "$TASKS" == "None" ]; then
+                  break
+                fi
+                echo "Esperando que los tasks se detengan... ($timeout segundos restantes)"
+                sleep 10
+                timeout=$((timeout-10))
+              done
+              
+              # Forzar eliminación de tareas restantes
+              TASKS=$(aws ecs list-tasks --cluster $CLUSTER_NAME --query 'taskArns[]' --output text) || true
+              if [ ! -z "$TASKS" ] && [ "$TASKS" != "None" ]; then
+                echo "Forzando eliminación de tareas..."
+                for TASK in $TASKS; do
+                  aws ecs stop-task --cluster $CLUSTER_NAME --task $TASK --reason "Destroy infrastructure" || true
+                done
+              fi
+              
+              # Eliminar el servicio
+              echo "Eliminando servicio ECS..."
+              aws ecs delete-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force || true
+            else
+              echo "No se encontró el servicio ECS, continuando..."
             fi
-            echo "Esperando que los tasks se detengan... ($timeout segundos restantes)"
-            sleep 10
-            timeout=$((timeout-10))
-          done
-          
-          # Forzar eliminación de tareas restantes
-          TASKS=$(aws ecs list-tasks --cluster $CLUSTER_NAME --query 'taskArns[]' --output text) || true
-          if [ ! -z "$TASKS" ] && [ "$TASKS" != "None" ]; then
-            echo "Forzando eliminación de tareas..."
-            for TASK in $TASKS; do
-              aws ecs stop-task --cluster $CLUSTER_NAME --task $TASK --reason "Destroy infrastructure" || true
-            done
+            
+            # Eliminar el cluster
+            echo "Eliminando cluster ECS..."
+            aws ecs delete-cluster --cluster $CLUSTER_NAME || true
+          else
+            echo "No se encontró el cluster ECS, continuando..."
           fi
-          
-          # Eliminar el servicio
-          echo "Eliminando servicio ECS..."
-          aws ecs delete-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force || true
-          
-          # Eliminar el cluster
-          echo "Eliminando cluster ECS..."
-          aws ecs delete-cluster --cluster $CLUSTER_NAME || true
 
       - name: Force Delete Lambda Resources
         run: |

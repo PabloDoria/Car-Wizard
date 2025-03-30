@@ -257,6 +257,20 @@ jobs:
             aws iam delete-role --role-name $ROLE_NAME || true
           done
 
+      - name: Force Delete CloudWatch Logs
+        run: |
+          echo "Eliminando grupos de logs de CloudWatch..."
+          
+          # Eliminar grupo de logs de Lambda
+          aws logs delete-log-group --log-group-name "/aws/lambda/LoadDataLambda" || true
+          
+          # Eliminar grupos de logs de ECS
+          LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/car-wizard-" --query 'logGroups[*].logGroupName' --output text) || true
+          for log_group in $LOG_GROUPS; do
+            echo "Eliminando grupo de logs $log_group..."
+            aws logs delete-log-group --log-group-name "$log_group" || true
+          done
+
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve

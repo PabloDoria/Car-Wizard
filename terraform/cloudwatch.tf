@@ -26,6 +26,7 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
     lifecycle {
         create_before_destroy = true
         prevent_destroy = false
+        ignore_changes = [name]
     }
 }
 

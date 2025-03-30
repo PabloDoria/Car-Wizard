@@ -1,0 +1,18 @@
+---
+- name: Create Docker build context
+  file:
+    path: "{{ playbook_dir }}/../../../docker"
+    state: directory
+    mode: '0755'
+
+- name: Configure PHP for Docker
+  template:
+    src: php.ini.j2
+    dest: "{{ playbook_dir }}/../../../docker/php.ini"
+    mode: '0644'
+
+- name: Copy Dockerfile
+  template:
+    src: Dockerfile.j2
+    dest: "{{ playbook_dir }}/../../../docker/Dockerfile"
+    mode: '0644' 

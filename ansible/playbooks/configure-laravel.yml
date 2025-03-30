@@ -1,0 +1,48 @@
+---
+- name: Configure Laravel Application
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    app_name: "Car Wizard"
+    app_env: "production"
+    db_connection: "mysql"
+    db_host: "{{ lookup('env', 'DB_HOST') }}"
+    db_database: "{{ lookup('env', 'DB_NAME') }}"
+    db_username: "{{ lookup('env', 'DB_USER') }}"
+    db_password: "{{ lookup('env', 'DB_PASSWORD') }}"
+
+  roles:
+    - role: laravel
+      tags: [laravel]
+    - role: docker
+      tags: [docker]
+
+  tasks:
+    - name: Install Composer dependencies
+      composer:
+        command: install
+        working_dir: "{{ playbook_dir }}/../../app"
+        no_dev: yes
+        optimize_autoloader: yes
+      tags: [composer]
+
+    - name: Generate Laravel key
+      command: php artisan key:generate
+      args:
+        chdir: "{{ playbook_dir }}/../../app"
+      when: app_env == "production"
+      tags: [laravel]
+
+    - name: Run database migrations
+      command: php artisan migrate --force
+      args:
+        chdir: "{{ playbook_dir }}/../../app"
+      when: app_env == "production"
+      tags: [laravel]
+
+    - name: Optimize Laravel
+      command: php artisan optimize
+      args:
+        chdir: "{{ playbook_dir }}/../../app"
+      when: app_env == "production"
+      tags: [laravel] 

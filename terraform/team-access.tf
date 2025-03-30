@@ -64,9 +64,9 @@ variable "team_members" {
     description = "Lista de nombres de los miembros del equipo"
     type        = list(string)
     default     = [
-        "Luis M", 
-        "Angel G",    
-        "Ana D"  
+        "anad",      # Ana D
+        "angelg",    # Angel G
+        "luism"      # Luis M
     ]
 }
 

@@ -171,38 +171,54 @@ jobs:
           
           if [ ! -z "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
             echo "Eliminando recursos asociados a VPC $VPC_ID..."
-            
-            # Esperar a que el ALB se elimine completamente
-            echo "Esperando que el ALB se elimine completamente..."
-            sleep 90
-            
-            # Verificar y eliminar ECS Tasks
-            echo "Verificando tareas ECS..."
+
+            # 1. Eliminar ECS Tasks y esperar
+            echo "Verificando y eliminando tareas ECS..."
             CLUSTER_NAME="car-wizard-cluster"
-            TASKS=$(aws ecs list-tasks --cluster $CLUSTER_NAME --query 'taskArns[]' --output text) || true
-            if [ ! -z "$TASKS" ] && [ "$TASKS" != "None" ]; then
-              echo "Deteniendo tareas ECS..."
-              for TASK in $TASKS; do
-                aws ecs stop-task --cluster $CLUSTER_NAME --task $TASK --reason "Destroy infrastructure" || true
+            aws ecs update-service --cluster $CLUSTER_NAME --service car-wizard-service --desired-count 0 || true
+            sleep 30
+
+            # 2. Eliminar ALB y esperar
+            echo "Eliminando Load Balancer..."
+            ALB_ARN=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text) || true
+            if [ ! -z "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
+              aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN || true
+              echo "Esperando que el ALB se elimine..."
+              while aws elbv2 describe-load-balancers --names car-wizard-alb 2>/dev/null; do
+                echo "ALB aún existe, esperando..."
+                sleep 30
               done
-              echo "Esperando que las tareas se detengan..."
-              sleep 60
             fi
 
-            # Buscar y eliminar ENIs, con reintentos
-            for attempt in {1..3}; do
+            # 3. Eliminar Target Groups
+            echo "Eliminando Target Groups..."
+            TG_ARN=$(aws elbv2 describe-target-groups --names car-wizard-tg --query 'TargetGroups[0].TargetGroupArn' --output text) || true
+            if [ ! -z "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+              aws elbv2 delete-target-group --target-group-arn $TG_ARN || true
+            fi
+
+            # 4. Esperar y eliminar ENIs
+            echo "Esperando 60 segundos antes de proceder con ENIs..."
+            sleep 60
+
+            # 5. Eliminar ENIs con reintentos
+            for attempt in {1..5}; do
               echo "Intento $attempt de eliminar Network Interfaces..."
               ENIs=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text) || true
               if [ ! -z "$ENIs" ] && [ "$ENIs" != "None" ]; then
                 for eni in $ENIs; do
-                  echo "Intentando desasociar ENI $eni..."
+                  echo "Procesando ENI $eni..."
+                  # Obtener información del ENI
                   ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids $eni --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text) || true
+                  
                   if [ ! -z "$ATTACHMENT" ] && [ "$ATTACHMENT" != "None" ]; then
+                    echo "Desvinculando ENI $eni..."
                     aws ec2 detach-network-interface --attachment-id $ATTACHMENT --force || true
                     sleep 10
                   fi
-                  echo "Intentando eliminar ENI $eni..."
-                  aws ec2 delete-network-interface --network-interface-id $eni || true
+                  
+                  echo "Eliminando ENI $eni..."
+                  aws ec2 delete-network-interface --network-interface-id $eni --force || true
                 done
                 echo "Esperando 30 segundos antes del siguiente intento..."
                 sleep 30
@@ -211,71 +227,44 @@ jobs:
                 break
               fi
             done
-            
-            # Eliminar NAT Gateways
-            echo "Eliminando NAT Gateways..."
-            NAT_GATEWAYS=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" --query 'NatGateways[*].NatGatewayId' --output text) || true
-            for nat in $NAT_GATEWAYS; do
-              aws ec2 delete-nat-gateway --nat-gateway-id $nat || true
-            done
-            
-            if [ ! -z "$NAT_GATEWAYS" ]; then
-              echo "Esperando que los NAT Gateways se eliminen..."
-              sleep 45
-            fi
-            
-            # Eliminar Endpoints
-            echo "Eliminando VPC Endpoints..."
-            VPC_ENDPOINTS=$(aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query 'VpcEndpoints[*].VpcEndpointId' --output text) || true
-            for endpoint in $VPC_ENDPOINTS; do
-              aws ec2 delete-vpc-endpoints --vpc-endpoint-ids $endpoint || true
-            done
-            
-            # Eliminar Security Groups, con reintentos
+
+            # 6. Eliminar Security Groups
+            echo "Eliminando Security Groups..."
             for attempt in {1..3}; do
-              echo "Intento $attempt de eliminar Security Groups..."
               SEC_GROUPS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=!default" --query 'SecurityGroups[*].GroupId' --output text) || true
               if [ ! -z "$SEC_GROUPS" ] && [ "$SEC_GROUPS" != "None" ]; then
                 for sg in $SEC_GROUPS; do
-                  aws ec2 delete-security-group --group-id $sg || true
+                  aws ec2 delete-security-group --group-id $sg --force || true
                 done
                 sleep 20
               else
                 break
               fi
             done
-            
-            # Eliminar Route Tables
+
+            # 7. Eliminar Route Tables
             echo "Eliminando Route Tables..."
             ROUTE_TABLES=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text) || true
             for rt in $ROUTE_TABLES; do
-              # Eliminar rutas no principales
-              aws ec2 describe-route-tables --route-table-id $rt --query 'RouteTables[0].Routes[?Origin!=`CreateRouteTable`].DestinationCidrBlock' --output text | while read -r cidr; do
-                if [ ! -z "$cidr" ]; then
-                  aws ec2 delete-route --route-table-id $rt --destination-cidr-block $cidr || true
-                fi
-              done
-              
-              # Desasociar
               ASSOC_IDS=$(aws ec2 describe-route-tables --route-table-ids $rt --query 'RouteTables[*].Associations[*].RouteTableAssociationId' --output text) || true
               for assoc in $ASSOC_IDS; do
                 aws ec2 disassociate-route-table --association-id $assoc || true
               done
-              
               aws ec2 delete-route-table --route-table-id $rt || true
             done
-            
-            # Eliminar Internet Gateway
+
+            # 8. Eliminar Internet Gateway
+            echo "Eliminando Internet Gateway..."
             IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[*].InternetGatewayId' --output text) || true
             if [ ! -z "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
               aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
               sleep 15
               aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
             fi
-            
-            # Eliminar Subnets con reintentos
+
+            # 9. Eliminar Subnets
+            echo "Eliminando Subnets..."
             for attempt in {1..3}; do
-              echo "Intento $attempt de eliminar Subnets..."
               SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text) || true
               if [ ! -z "$SUBNETS" ] && [ "$SUBNETS" != "None" ]; then
                 for subnet in $SUBNETS; do
@@ -286,25 +275,30 @@ jobs:
                 break
               fi
             done
-            
-            # Esperar y mostrar recursos restantes antes de intentar eliminar la VPC
-            echo "Esperando 45 segundos antes de eliminar la VPC..."
-            sleep 45
-            
+
+            # 10. Esperar y verificar recursos restantes
+            echo "Esperando 60 segundos antes de eliminar la VPC..."
+            sleep 60
+
+            # 11. Verificar y mostrar recursos restantes
             echo "Verificando recursos restantes en la VPC..."
-            echo "ENIs restantes:"
             aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" || true
-            echo "Security Groups restantes:"
             aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" || true
-            echo "Subnets restantes:"
             aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" || true
-            
-            # Intentar eliminar la VPC
+
+            # 12. Intentar eliminar la VPC
             echo "Intentando eliminar la VPC..."
             aws ec2 delete-vpc --vpc-id $VPC_ID || true
-            
-            if [ $? -ne 0 ]; then
-              echo "No se pudo eliminar la VPC. Por favor, revisa la consola de AWS para más detalles."
+
+            # 13. Verificar si la VPC se eliminó
+            if aws ec2 describe-vpcs --vpc-ids $VPC_ID 2>/dev/null; then
+              echo "⚠️ La VPC no se pudo eliminar. Recursos restantes:"
+              aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" || true
+              aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" || true
+              aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" || true
+              exit 1
+            else
+              echo "✅ VPC eliminada exitosamente"
             fi
           fi
 

@@ -233,25 +233,27 @@ jobs:
             
             # Primero eliminar todas las reglas de ingreso y egreso
             echo "Eliminando reglas de los Security Groups..."
-            SEC_GROUPS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[*].GroupId' --output text) || true
-            if [ ! -z "$SEC_GROUPS" ] && [ "$SEC_GROUPS" != "None" ]; then
-              for sg in $SEC_GROUPS; do
-                echo "Eliminando reglas del Security Group $sg..."
+            SEC_GROUPS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[*].[GroupId,IpPermissions,IpPermissionsEgress]' --output json) || true
+            
+            if [ ! -z "$SEC_GROUPS" ] && [ "$SEC_GROUPS" != "null" ]; then
+              echo "$SEC_GROUPS" | jq -c '.[]' | while read -r group; do
+                GROUP_ID=$(echo "$group" | jq -r '.[0]')
+                echo "Procesando Security Group $GROUP_ID..."
                 
-                # Eliminar reglas de ingreso
-                INGRESS_RULES=$(aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$sg" "Name=is-egress,Values=false" --query 'SecurityGroupRules[*].SecurityGroupRuleId' --output text) || true
-                if [ ! -z "$INGRESS_RULES" ] && [ "$INGRESS_RULES" != "None" ]; then
-                  for rule in $INGRESS_RULES; do
-                    aws ec2 revoke-security-group-ingress --group-id $sg --security-group-rule-ids $rule || true
-                  done
+                # Eliminar reglas de ingreso (IpPermissions)
+                if [ "$(echo "$group" | jq '.[1]')" != "[]" ] && [ "$(echo "$group" | jq '.[1]')" != "null" ]; then
+                  echo "Eliminando reglas de ingreso..."
+                  aws ec2 revoke-security-group-ingress \
+                    --group-id "$GROUP_ID" \
+                    --ip-permissions "$(echo "$group" | jq '.[1]')" || true
                 fi
                 
-                # Eliminar reglas de egreso
-                EGRESS_RULES=$(aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$sg" "Name=is-egress,Values=true" --query 'SecurityGroupRules[*].SecurityGroupRuleId' --output text) || true
-                if [ ! -z "$EGRESS_RULES" ] && [ "$EGRESS_RULES" != "None" ]; then
-                  for rule in $EGRESS_RULES; do
-                    aws ec2 revoke-security-group-egress --group-id $sg --security-group-rule-ids $rule || true
-                  done
+                # Eliminar reglas de egreso (IpPermissionsEgress)
+                if [ "$(echo "$group" | jq '.[2]')" != "[]" ] && [ "$(echo "$group" | jq '.[2]')" != "null" ]; then
+                  echo "Eliminando reglas de egreso..."
+                  aws ec2 revoke-security-group-egress \
+                    --group-id "$GROUP_ID" \
+                    --ip-permissions "$(echo "$group" | jq '.[2]')" || true
                 fi
               done
               
@@ -259,14 +261,16 @@ jobs:
               sleep 30
             fi
 
-            # Luego intentar eliminar los security groups
+            # Luego intentar eliminar los security groups no predeterminados
             for attempt in {1..3}; do
               echo "Intento $attempt de eliminar Security Groups..."
               SEC_GROUPS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=!default" --query 'SecurityGroups[*].GroupId' --output text) || true
               if [ ! -z "$SEC_GROUPS" ] && [ "$SEC_GROUPS" != "None" ]; then
                 for sg in $SEC_GROUPS; do
+                  echo "Eliminando Security Group $sg..."
                   aws ec2 delete-security-group --group-id $sg || true
                 done
+                echo "Esperando 20 segundos antes del siguiente intento..."
                 sleep 20
               else
                 break
@@ -277,8 +281,22 @@ jobs:
             DEFAULT_SG=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=default" --query 'SecurityGroups[*].GroupId' --output text) || true
             if [ ! -z "$DEFAULT_SG" ] && [ "$DEFAULT_SG" != "None" ]; then
               echo "Eliminando reglas del Security Group default..."
-              aws ec2 revoke-security-group-ingress --group-id $DEFAULT_SG --protocol all --source-group $DEFAULT_SG || true
-              aws ec2 revoke-security-group-egress --group-id $DEFAULT_SG --protocol all --cidr 0.0.0.0/0 || true
+              # Obtener y eliminar todas las reglas del grupo default
+              DEFAULT_SG_RULES=$(aws ec2 describe-security-groups --group-ids $DEFAULT_SG --query 'SecurityGroups[0].[IpPermissions,IpPermissionsEgress]' --output json) || true
+              
+              # Eliminar reglas de ingreso
+              if [ "$(echo "$DEFAULT_SG_RULES" | jq '.[0]')" != "[]" ] && [ "$(echo "$DEFAULT_SG_RULES" | jq '.[0]')" != "null" ]; then
+                aws ec2 revoke-security-group-ingress \
+                  --group-id "$DEFAULT_SG" \
+                  --ip-permissions "$(echo "$DEFAULT_SG_RULES" | jq '.[0]')" || true
+              fi
+              
+              # Eliminar reglas de egreso
+              if [ "$(echo "$DEFAULT_SG_RULES" | jq '.[1]')" != "[]" ] && [ "$(echo "$DEFAULT_SG_RULES" | jq '.[1]')" != "null" ]; then
+                aws ec2 revoke-security-group-egress \
+                  --group-id "$DEFAULT_SG" \
+                  --ip-permissions "$(echo "$DEFAULT_SG_RULES" | jq '.[1]')" || true
+              fi
             fi
 
             # 7. Eliminar Route Tables

@@ -1,7 +1,5 @@
 variable "aws_region" {
-    description = "The AWS region to deploy to"
-    type        = string
-    default     = "us-east-1"
+    default = "us-east-1"
 }
 
 variable "project" {
@@ -10,9 +8,8 @@ variable "project" {
 }
 
 variable "environment" {
-    description = "Environment name"
-    type        = string
-    default     = "dev"
+    default = "production"
+    description = "Entorno de despliegue"
 }
 
 variable "application_id" {
@@ -21,13 +18,13 @@ variable "application_id" {
 }
 
 variable "common_tags" {
-    description = "Common tags to apply to all resources"
-    type        = map(string)
+    description = "Tags comunes para todos los recursos"
+    type = map(string)
     default = {
-        Project     = "Car Wizard"
-        Environment = "dev"
+        Project     = "car-wizard"
+        Environment = "production"
         ManagedBy   = "terraform"
-        Application = "car-wizard"
+        Application = "car-wizard-app"
     }
 }
 
@@ -44,27 +41,19 @@ variable "ecs_service_name" {
 }
 
 variable "lambda_function_name" {
-    description = "Name of the Lambda function"
-    type        = string
-    default     = "LoadDataLambda"
+    default = "LoadDataLambda"
 }
 
 variable "rds_db_name" {
-    description = "Database name"
-    type        = string
-    default     = "carwizarddb"
+    default = "carwizarddb"
 }
 
 variable "rds_username" {
-    description = "Username for the RDS instance"
-    type        = string
-    default     = "admin"
+    default = "admin"
 }
 
 variable "rds_password" {
-    description = "Password for the RDS instance"
-    type        = string
-    sensitive   = true
+    default = "SuperSecurePassword123!"
 }
 
 variable "github_repo" {
@@ -74,7 +63,7 @@ variable "github_repo" {
 }
 
 variable "s3_data_bucket_name" {
-    description = "Name of the S3 bucket for storing Lambda output data"
+    description = "Nombre del bucket S3 para almacenar los datos procesados"
     type        = string
     default     = "car-wizard-data"
 }

@@ -5,9 +5,7 @@ resource "aws_lb" "alb" {
     security_groups    = [aws_security_group.alb_sg.id]
     subnets            = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]  # <- Agregar ambaas subnetsss
 
-    tags = {
-        Name = "car-wizard-alb"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_lb_target_group" "alb_target" {
@@ -16,6 +14,8 @@ resource "aws_lb_target_group" "alb_target" {
     protocol    = "HTTP"
     vpc_id      = aws_vpc.vpc.id
     target_type = "ip"
+    
+    tags = var.common_tags
 }
 
 resource "aws_lb_listener" "http" {
@@ -27,4 +27,6 @@ resource "aws_lb_listener" "http" {
         type             = "forward"
         target_group_arn = aws_lb_target_group.alb_target.arn
     }
+    
+    tags = var.common_tags
 }

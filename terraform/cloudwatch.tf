@@ -2,11 +2,7 @@ resource "aws_cloudwatch_log_group" "ecs_logs" {
     name_prefix       = "/ecs/car-wizard-"
     retention_in_days = 30
 
-    tags = {
-        Name        = "car-wizard-ecs-logs"
-        Environment = "production"
-        Project     = "car-wizard"
-    }
+    tags = var.common_tags
 
     lifecycle {
         create_before_destroy = true
@@ -17,11 +13,7 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
     name              = "/aws/lambda/${var.lambda_function_name}"
     retention_in_days = 30
 
-    tags = {
-        Name        = "car-wizard-lambda-logs"
-        Environment = "production"
-        Project     = "car-wizard"
-    }
+    tags = var.common_tags
 
     lifecycle {
         create_before_destroy = true
@@ -47,6 +39,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
     }
 
     alarm_actions = []  # Aquí puedes agregar ARNs de SNS topics para notificaciones
+    
+    tags = var.common_tags
 }
 
 # Alarma para monitorear el estado de RDS
@@ -66,4 +60,6 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
     }
 
     alarm_actions = []  # Aquí puedes agregar ARNs de SNS topics para notificaciones
+    
+    tags = var.common_tags
 }

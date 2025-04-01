@@ -17,6 +17,14 @@ resource "aws_resourcegroups_group" "car_wizard" {
     }
 
     tags = var.common_tags
+    
+    lifecycle {
+        create_before_destroy = true
+        # Permitir recreación completa si hay problemas
+        prevent_destroy = false
+        # Ignorar cambios en estos atributos
+        ignore_changes = [description, resource_query]
+    }
 }
 
 resource "aws_ssm_document" "app_config" {
@@ -59,6 +67,10 @@ resource "aws_ssm_document" "app_config" {
     })
 
     tags = var.common_tags
+    
+    lifecycle {
+        create_before_destroy = true
+    }
 }
 
 # Crear un dashboard en CloudWatch para visualizar todos los recursos

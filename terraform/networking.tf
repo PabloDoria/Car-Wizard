@@ -4,11 +4,7 @@ resource "aws_vpc" "vpc" {
     enable_dns_hostnames = true
     enable_dns_support   = true
 
-    tags = {
-        Name = "car-wizard-vpc"
-        Environment = "production"
-        Project     = "car-wizard"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_subnet" "subnet_1" {
@@ -16,6 +12,8 @@ resource "aws_subnet" "subnet_1" {
     cidr_block              = "10.0.1.0/24"
     availability_zone       = "us-east-1a"
     map_public_ip_on_launch = true
+    
+    tags = var.common_tags
 }
 
 resource "aws_subnet" "subnet_2" {
@@ -23,6 +21,8 @@ resource "aws_subnet" "subnet_2" {
     cidr_block              = "10.0.2.0/24"
     availability_zone       = "us-east-1b"
     map_public_ip_on_launch = true
+    
+    tags = var.common_tags
 }
 
 resource "aws_subnet" "subnet_3" {
@@ -83,9 +83,7 @@ resource "aws_security_group" "alb_sg" {
         cidr_blocks = ["0.0.0.0/0"]
     }
 
-    tags = {
-        Name = "alb-security-group"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_security_group" "rds_sg" {
@@ -101,9 +99,7 @@ resource "aws_security_group" "rds_sg" {
         security_groups = [aws_security_group.ecs_tasks_sg.id]
     }
 
-    tags = {
-        Name = "rds-security-group"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_security_group" "ecs_tasks_sg" {
@@ -127,17 +123,13 @@ resource "aws_security_group" "ecs_tasks_sg" {
         cidr_blocks = ["0.0.0.0/0"]
     }
 
-    tags = {
-        Name = "ecs-tasks-security-group"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_internet_gateway" "igw" {
     vpc_id = aws_vpc.vpc.id
 
-    tags = {
-        Name = "internet-gateway"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_route_table" "public_rt" {
@@ -148,9 +140,7 @@ resource "aws_route_table" "public_rt" {
         gateway_id = aws_internet_gateway.igw.id
     }
 
-    tags = {
-        Name = "public-route-table"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_route_table_association" "subnet_1_association" {

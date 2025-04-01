@@ -19,6 +19,8 @@ resource "aws_iam_role" "lambda_role" {
     lifecycle {
         create_before_destroy = true
     }
+
+    tags = var.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
@@ -51,13 +53,14 @@ resource "aws_iam_role_policy" "lambda_rds_access" {
     })
 }
 
-resource "aws_lambda_function" "lambda" {
+resource "aws_lambda_function" "data_load" {
     function_name    = var.lambda_function_name
     role            = aws_iam_role.lambda_role.arn
-    filename        = "../lambda/lambda.zip"
+    filename        = "lambda/lambda_function.zip"
     handler         = "lambda_function.lambda_handler"
-    runtime         = "python3.8"
+    runtime         = "python3.9"
     timeout         = 30
+    source_code_hash = filebase64sha256("lambda/lambda_function.zip")
 
     vpc_config {
         subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
@@ -66,17 +69,29 @@ resource "aws_lambda_function" "lambda" {
 
     environment {
         variables = {
-            DB_HOST     = aws_db_instance.rds.endpoint
-            DB_NAME     = var.rds_db_name
-            DB_USER     = var.rds_username
-            DB_PASSWORD = var.rds_password
+            RDS_ENDPOINT = aws_db_instance.rds.endpoint
+            RDS_DATABASE = var.rds_db_name
+            RDS_USERNAME = var.rds_username
+            RDS_PASSWORD = var.rds_password
         }
     }
+
+    tags = var.common_tags
+    
+    lifecycle {
+        create_before_destroy = true
+    }
+    
+    # Al establecer una dependencia, garantizamos un orden específico
+    depends_on = [
+        aws_iam_role.lambda_role,
+        aws_security_group.lambda_sg
+    ]
 }
 
 resource "aws_security_group" "lambda_sg" {
     name_prefix = "lambda-sg-"
-    description = "Security group for Lambda function"
+    description = "Security group for Lambda functions"
     vpc_id      = aws_vpc.vpc.id
 
     ingress {
@@ -94,29 +109,27 @@ resource "aws_security_group" "lambda_sg" {
         cidr_blocks = ["0.0.0.0/0"]
     }
 
-    tags = {
-        Name        = "lambda-security-group"
-        Environment = "production"
-        Project     = "car-wizard"
-    }
+    tags = var.common_tags
 }
 
-resource "aws_cloudwatch_event_rule" "lambda_schedule" {
+resource "aws_cloudwatch_event_rule" "schedule" {
     name                = "trigger-car-data-update"
-    description         = "Trigger car data update Lambda function"
+    description         = "Trigger Lambda function to update car data"
     schedule_expression = "rate(1 day)"
+
+    tags = var.common_tags
 }
 
 resource "aws_cloudwatch_event_target" "lambda_target" {
-    rule      = aws_cloudwatch_event_rule.lambda_schedule.name
+    rule      = aws_cloudwatch_event_rule.schedule.name
     target_id = "TriggerLambda"
-    arn       = aws_lambda_function.lambda.arn
+    arn       = aws_lambda_function.data_load.arn
 }
 
 resource "aws_lambda_permission" "allow_eventbridge" {
     statement_id  = "AllowEventBridgeInvoke"
     action        = "lambda:InvokeFunction"
-    function_name = aws_lambda_function.lambda.function_name
+    function_name = aws_lambda_function.data_load.function_name
     principal     = "events.amazonaws.com"
-    source_arn    = aws_cloudwatch_event_rule.lambda_schedule.arn
+    source_arn    = aws_cloudwatch_event_rule.schedule.arn
 } 

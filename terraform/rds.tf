@@ -9,9 +9,7 @@ resource "aws_db_subnet_group" "rds_subnet_group" {
         aws_subnet.subnet_6.id
     ]
 
-    tags = {
-        Name = "car-wizard-rds-subnet-group"
-    }
+    tags = var.common_tags
 }
 
 resource "aws_db_parameter_group" "mysql_parameters" {
@@ -27,6 +25,8 @@ resource "aws_db_parameter_group" "mysql_parameters" {
         name  = "character_set_client"
         value = "utf8mb4"
     }
+    
+    tags = var.common_tags
 }
 
 resource "aws_db_instance" "rds" {
@@ -48,9 +48,7 @@ resource "aws_db_instance" "rds" {
     multi_az               = false
     publicly_accessible    = false
     
-    tags = {
-        Name = "car-wizard-database"
-    }
+    tags = var.common_tags
 }
 
 output "rds_endpoint" {

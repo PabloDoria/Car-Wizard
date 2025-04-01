@@ -103,22 +103,83 @@ jobs:
           echo "Eliminando función Lambda $FUNCTION_NAME..."
           aws lambda delete-function --function-name $FUNCTION_NAME || true
           
-          # 3. Esperar a que las ENIs se limpien (máximo 5 minutos)
-          echo "Esperando a que las ENIs de Lambda se limpien..."
-          timeout=300
-          while [ $timeout -gt 0 ]; do
-            ENIs=$(aws ec2 describe-network-interfaces --filters "Name=description,Values=*Lambda*" "Name=vpc-id,Values=${VPC_NAME}" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text)
-            if [ -z "$ENIs" ] || [ "$ENIs" == "None" ]; then
-              echo "✅ ENIs de Lambda eliminadas correctamente"
-              break
-            fi
-            echo "ENIs de Lambda aún existen, esperando... ($timeout segundos restantes)"
-            sleep 30
-            timeout=$((timeout-30))
-          done
+          # Obtener VPC ID
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${VPC_NAME}" --query 'Vpcs[0].VpcId' --output text)
           
-          if [ $timeout -le 0 ]; then
-            echo "⚠️ Tiempo de espera agotado esperando que las ENIs se eliminen"
+          # 3. Forzar la eliminación de las ENIs asociadas con Lambda
+          echo "Buscando y eliminando ENIs de Lambda..."
+          
+          # Identificar todas las ENIs asociadas a Lambda
+          LAMBDA_ENIS=$(aws ec2 describe-network-interfaces --filters "Name=description,Values=*Lambda*" "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text)
+          
+          if [ ! -z "$LAMBDA_ENIS" ] && [ "$LAMBDA_ENIS" != "None" ]; then
+            echo "Se encontraron ENIs de Lambda: $LAMBDA_ENIS"
+            
+            for ENI in $LAMBDA_ENIS; do
+              echo "Procesando ENI $ENI..."
+              
+              # Obtener información de la ENI
+              ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text || echo "")
+              
+              if [ ! -z "$ATTACHMENT" ] && [ "$ATTACHMENT" != "None" ]; then
+                echo "Intentando desconectar ENI mediante su attachment ID $ATTACHMENT..."
+                aws ec2 detach-network-interface --attachment-id $ATTACHMENT --force || true
+                sleep 5
+              fi
+              
+              # En algunos casos la ENI no se puede eliminar con el comando normal, intentamos usar force-detach-network-interface
+              # (Este comando no existe realmente en la AWS CLI, pero ilustra lo que hacemos con los siguientes pasos)
+              
+              # Identificar el Requester ID de la ENI (generalmente el ARN del Lambda)
+              REQUESTER_ID=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI --query 'NetworkInterfaces[0].RequesterId' --output text || echo "")
+              echo "Requester ID de la ENI: $REQUESTER_ID"
+              
+              # Agregar tag para marcarla como lista para eliminación (para identificarla después)
+              aws ec2 create-tags --resources $ENI --tags Key=Name,Value=delete-me || true
+              
+              # Intentar eliminar la ENI directamente (puede fallar)
+              aws ec2 delete-network-interface --network-interface-id $ENI || true
+            done
+          else 
+            echo "No se encontraron ENIs de Lambda"
+          fi
+          
+          # 4. Esperar 60 segundos para dar tiempo a AWS a limpiar recursos
+          echo "Esperando 60 segundos para que AWS limpie los recursos de Lambda..."
+          sleep 60
+          
+          # 5. Segundo intento para eliminar ENIs que no se pudieron eliminar
+          REMAINING_ENIS=$(aws ec2 describe-network-interfaces --filters "Name=description,Values=*Lambda*" "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text)
+          
+          if [ ! -z "$REMAINING_ENIS" ] && [ "$REMAINING_ENIS" != "None" ]; then
+            echo "⚠️ Aún quedan ENIs de Lambda: $REMAINING_ENIS"
+            echo "Intentando un método alternativo de eliminación..."
+            
+            for ENI in $REMAINING_ENIS; do
+              echo "Último intento de eliminar ENI $ENI..."
+              
+              # Último recurso: intentar con AWS CLI modificando su estado
+              # Esto es peligroso y debería usarse con precaución
+              ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text || echo "")
+              
+              if [ ! -z "$ATTACHMENT" ] && [ "$ATTACHMENT" != "None" ]; then
+                echo "Detectado attachment $ATTACHMENT, forzando desconexión con flag force..."
+                # Usar --force para forzar el detach incluso si está en uso
+                aws ec2 detach-network-interface --attachment-id $ATTACHMENT --force || true
+                sleep 10
+              fi
+              
+              # Usar una estrategia de reintento para eliminar la ENI
+              for i in {1..5}; do
+                echo "Intento $i de 5 para eliminar ENI $ENI..."
+                aws ec2 delete-network-interface --network-interface-id $ENI && break || sleep 10
+              done
+            done
+            
+            echo "Esperando otros 60 segundos para completar la limpieza..."
+            sleep 60
+          else
+            echo "✅ Todas las ENIs de Lambda se eliminaron correctamente"
           fi
 
       - name: Force Delete Load Balancer
@@ -195,13 +256,58 @@ jobs:
           if [ ! -z "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
             echo "Eliminando recursos asociados a VPC $VPC_ID..."
 
-            # 1. Eliminar ECS Tasks y esperar
+            # 1. Revisar si el Lambda fue eliminado correctamente
+            echo "Verificando que el Lambda haya sido eliminado correctamente..."
+            LAMBDA_STILL_EXISTS=$(aws lambda get-function --function-name "LoadDataLambda" 2>/dev/null && echo "true" || echo "false")
+            
+            if [ "$LAMBDA_STILL_EXISTS" == "true" ]; then
+              echo "⚠️ Lambda aún existe, intentando forzar su eliminación..."
+              aws lambda delete-function --function-name "LoadDataLambda" --force || true
+              echo "Esperando 30 segundos después de forzar la eliminación del Lambda..."
+              sleep 30
+            else
+              echo "✅ Lambda eliminado correctamente."
+            fi
+
+            # 2. Intentar eliminar las ENIs del Lambda nuevamente si todavía existen
+            echo "Verificando si aún existen ENIs de Lambda..."
+            LAMBDA_ENIS=$(aws ec2 describe-network-interfaces --filters "Name=description,Values=*Lambda*" "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text)
+            
+            if [ ! -z "$LAMBDA_ENIS" ] && [ "$LAMBDA_ENIS" != "None" ]; then
+              echo "Aún existen ENIs de Lambda: $LAMBDA_ENIS"
+              echo "Intentando un método más agresivo para eliminarlas..."
+              
+              for ENI in $LAMBDA_ENIS; do
+                echo "Procesando ENI $ENI con método agresivo..."
+                
+                # Forzar el detach con --force
+                ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text || echo "")
+                if [ ! -z "$ATTACHMENT" ] && [ "$ATTACHMENT" != "None" ]; then
+                  aws ec2 detach-network-interface --attachment-id $ATTACHMENT --force || true
+                  echo "Esperando 20 segundos para que se complete el detach forzado..."
+                  sleep 20
+                fi
+                
+                # Intentar eliminar la ENI varias veces
+                for attempt in {1..10}; do
+                  echo "Intento $attempt de 10 para eliminar ENI $ENI..."
+                  aws ec2 delete-network-interface --network-interface-id $ENI && echo "ENI eliminada exitosamente" && break || sleep 10
+                done
+              done
+              
+              echo "Esperando 60 segundos para asegurar que los cambios se propaguen..."
+              sleep 60
+            else
+              echo "No se encontraron ENIs de Lambda pendientes."
+            fi
+
+            # 3. Eliminar ECS Tasks y esperar
             echo "Verificando y eliminando tareas ECS..."
             CLUSTER_NAME="car-wizard-cluster"
             aws ecs update-service --cluster $CLUSTER_NAME --service car-wizard-service --desired-count 0 || true
             sleep 30
 
-            # 2. Eliminar ALB y esperar
+            # 4. Eliminar ALB y esperar
             echo "Eliminando Load Balancer..."
             ALB_ARN=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text) || true
             if [ ! -z "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
@@ -213,18 +319,18 @@ jobs:
               done
             fi
 
-            # 3. Eliminar Target Groups
+            # 5. Eliminar Target Groups
             echo "Eliminando Target Groups..."
             TG_ARN=$(aws elbv2 describe-target-groups --names car-wizard-tg --query 'TargetGroups[0].TargetGroupArn' --output text) || true
             if [ ! -z "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
               aws elbv2 delete-target-group --target-group-arn $TG_ARN || true
             fi
 
-            # 4. Esperar y eliminar ENIs
+            # 6. Esperar y eliminar ENIs
             echo "Esperando 60 segundos antes de proceder con ENIs..."
             sleep 60
 
-            # 5. Eliminar ENIs con reintentos
+            # 7. Eliminar ENIs con reintentos
             for attempt in {1..5}; do
               echo "Intento $attempt de eliminar Network Interfaces..."
               ENIs=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text) || true
@@ -251,7 +357,7 @@ jobs:
               fi
             done
 
-            # 6. Eliminar Security Groups
+            # 8. Eliminar Security Groups
             echo "Eliminando Security Groups..."
             
             # Identificar y eliminar las referencias cruzadas entre security groups
@@ -347,7 +453,7 @@ jobs:
             echo "Verificando security groups restantes..."
             aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" || true
 
-            # 7. Eliminar Route Tables
+            # 9. Eliminar Route Tables
             echo "Eliminando Route Tables..."
             ROUTE_TABLES=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text) || true
             for rt in $ROUTE_TABLES; do
@@ -358,7 +464,7 @@ jobs:
               aws ec2 delete-route-table --route-table-id $rt || true
             done
 
-            # 8. Eliminar Internet Gateway
+            # 10. Eliminar Internet Gateway
             echo "Eliminando Internet Gateway..."
             IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[*].InternetGatewayId' --output text) || true
             if [ ! -z "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
@@ -367,7 +473,7 @@ jobs:
               aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
             fi
 
-            # 9. Eliminar Subnets
+            # 11. Eliminar Subnets
             echo "Eliminando Subnets..."
             for attempt in {1..3}; do
               SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text) || true
@@ -381,21 +487,21 @@ jobs:
               fi
             done
 
-            # 10. Esperar y verificar recursos restantes
+            # 12. Esperar y verificar recursos restantes
             echo "Esperando 60 segundos antes de eliminar la VPC..."
             sleep 60
 
-            # 11. Verificar y mostrar recursos restantes
+            # 13. Verificar y mostrar recursos restantes
             echo "Verificando recursos restantes en la VPC..."
             aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" || true
             aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" || true
             aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" || true
 
-            # 12. Intentar eliminar la VPC
+            # 14. Intentar eliminar la VPC
             echo "Intentando eliminar la VPC..."
             aws ec2 delete-vpc --vpc-id $VPC_ID || true
 
-            # 13. Verificar si la VPC se eliminó
+            # 15. Verificar si la VPC se eliminó
             if aws ec2 describe-vpcs --vpc-ids $VPC_ID 2>/dev/null; then
               echo "⚠️ La VPC no se pudo eliminar. Recursos restantes:"
               aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" || true
@@ -506,6 +612,76 @@ jobs:
             echo "Eliminando grupo de logs $log_group..."
             aws logs delete-log-group --log-group-name "$log_group" || true
           done
+
+      - name: Force Delete CloudWatch Dashboard
+        run: |
+          echo "Eliminando dashboard de CloudWatch..."
+          aws cloudwatch delete-dashboards --dashboard-names "car-wizard-dashboard" || true
+
+      - name: Force Delete Application Manager & Resource Groups
+        run: |
+          echo "Eliminando configuración de Application Manager y Resource Groups..."
+          
+          # 1. Eliminar documento SSM de configuración de la aplicación
+          echo "Eliminando documento SSM..."
+          aws ssm delete-document --name "car-wizard-app-config" || true
+          
+          # 2. Eliminar Resource Group usando ARN completo
+          echo "Buscando Resource Group por nombre..."
+          RESOURCE_GROUP_ARN=$(aws resource-groups list-groups --query "GroupIdentifiers[?Name=='car-wizard-resources'].GroupArn" --output text)
+          
+          if [ ! -z "$RESOURCE_GROUP_ARN" ] && [ "$RESOURCE_GROUP_ARN" != "None" ]; then
+            echo "Resource Group encontrado: $RESOURCE_GROUP_ARN"
+            echo "Eliminando Resource Group con API directa..."
+            aws resource-groups delete-group --group-name "car-wizard-resources" --force || true
+            
+            # Verificar si el grupo sigue existiendo
+            echo "Esperando 5 segundos..."
+            sleep 5
+            
+            GROUP_STILL_EXISTS=$(aws resource-groups list-groups --query "GroupIdentifiers[?Name=='car-wizard-resources'].GroupArn" --output text)
+            if [ ! -z "$GROUP_STILL_EXISTS" ] && [ "$GROUP_STILL_EXISTS" != "None" ]; then
+              echo "⚠️ El Resource Group aún existe, intentando un método alternativo..."
+              
+              # Intentar con la API de resource-groups-tagging
+              echo "Intentando eliminar etiquetas del grupo..."
+              aws resource-groups-tagging api untag-resources --resource-arn-list "$RESOURCE_GROUP_ARN" --tag-keys "Application" "Project" "Environment" "ManagedBy" || true
+              
+              # Intentar otra vez eliminar el grupo
+              echo "Intentando eliminar el grupo nuevamente..."
+              aws resource-groups delete-group --group-name "car-wizard-resources" --force || true
+              
+              # Intentar con CLI directo (último recurso)
+              echo "Intentando método alternativo con AWS CLI..."
+              aws resource-groups delete-group --group="car-wizard-resources" --force || true
+            fi
+          else
+            echo "No se encontró el Resource Group 'car-wizard-resources'"
+          fi
+          
+          # 3. Verificación final después de varios reintentos
+          for i in {1..3}; do
+            echo "Verificación $i de 3: Comprobando si el Resource Group aún existe..."
+            FINAL_CHECK=$(aws resource-groups list-groups --query "GroupIdentifiers[?Name=='car-wizard-resources'].GroupArn" --output text)
+            
+            if [ -z "$FINAL_CHECK" ] || [ "$FINAL_CHECK" == "None" ]; then
+              echo "✅ Resource Group eliminado con éxito"
+              break
+            else
+              echo "⚠️ El Resource Group aún existe, reintentando eliminación (intento $i)..."
+              aws resource-groups delete-group --group-name "car-wizard-resources" --force || true
+              echo "Esperando 10 segundos..."
+              sleep 10
+            fi
+          done
+          
+          # 4. Verificar dashboard de CloudWatch
+          echo "Eliminando dashboard de CloudWatch..."
+          aws cloudwatch delete-dashboards --dashboard-names "car-wizard-dashboard" || true
+          
+          # 5. Opcional: Verificar si hay grupos de resource-groups residuales
+          echo "Listando todos los Resource Groups restantes..."
+          aws resource-groups list-groups
 
       - name: Terraform Destroy
         working-directory: terraform

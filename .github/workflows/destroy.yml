@@ -93,10 +93,33 @@ jobs:
       - name: Force Delete Lambda Resources
         run: |
           echo "Eliminando recursos de Lambda..."
-          # Eliminar permisos y triggers primero
+          
+          # 1. Eliminar permisos y triggers primero
           aws events remove-targets --rule trigger-car-data-update --ids TriggerLambda || true
           aws events delete-rule --name trigger-car-data-update || true
-          aws lambda delete-function --function-name LoadDataLambda || true
+          
+          # 2. Eliminar la función Lambda
+          FUNCTION_NAME="LoadDataLambda"
+          echo "Eliminando función Lambda $FUNCTION_NAME..."
+          aws lambda delete-function --function-name $FUNCTION_NAME || true
+          
+          # 3. Esperar a que las ENIs se limpien (máximo 5 minutos)
+          echo "Esperando a que las ENIs de Lambda se limpien..."
+          timeout=300
+          while [ $timeout -gt 0 ]; do
+            ENIs=$(aws ec2 describe-network-interfaces --filters "Name=description,Values=*Lambda*" "Name=vpc-id,Values=${VPC_NAME}" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text)
+            if [ -z "$ENIs" ] || [ "$ENIs" == "None" ]; then
+              echo "✅ ENIs de Lambda eliminadas correctamente"
+              break
+            fi
+            echo "ENIs de Lambda aún existen, esperando... ($timeout segundos restantes)"
+            sleep 30
+            timeout=$((timeout-30))
+          done
+          
+          if [ $timeout -le 0 ]; then
+            echo "⚠️ Tiempo de espera agotado esperando que las ENIs se eliminen"
+          fi
 
       - name: Force Delete Load Balancer
         run: |

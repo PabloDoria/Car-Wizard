@@ -1,5 +1,7 @@
 variable "aws_region" {
-    default = "us-east-1"
+    description = "The AWS region to deploy to"
+    type        = string
+    default     = "us-east-1"
 }
 
 variable "project" {
@@ -8,8 +10,9 @@ variable "project" {
 }
 
 variable "environment" {
-    default = "production"
-    description = "Entorno de despliegue"
+    description = "Environment name"
+    type        = string
+    default     = "dev"
 }
 
 variable "application_id" {
@@ -18,13 +21,13 @@ variable "application_id" {
 }
 
 variable "common_tags" {
-    description = "Tags comunes para todos los recursos"
-    type = map(string)
+    description = "Common tags to apply to all resources"
+    type        = map(string)
     default = {
-        Project     = "car-wizard"
-        Environment = "production"
+        Project     = "Car Wizard"
+        Environment = "dev"
         ManagedBy   = "terraform"
-        Application = "car-wizard-app"
+        Application = "car-wizard"
     }
 }
 
@@ -41,23 +44,37 @@ variable "ecs_service_name" {
 }
 
 variable "lambda_function_name" {
-    default = "LoadDataLambda"
+    description = "Name of the Lambda function"
+    type        = string
+    default     = "LoadDataLambda"
 }
 
 variable "rds_db_name" {
-    default = "carwizarddb"
+    description = "Database name"
+    type        = string
+    default     = "carwizarddb"
 }
 
 variable "rds_username" {
-    default = "admin"
+    description = "Username for the RDS instance"
+    type        = string
+    default     = "admin"
 }
 
 variable "rds_password" {
-    default = "SuperSecurePassword123!"
+    description = "Password for the RDS instance"
+    type        = string
+    sensitive   = true
 }
 
 variable "github_repo" {
     description = "GitHub repository in format owner/repo"
     type        = string
     default     = "PabloDoria/Car-Wizard"
+}
+
+variable "s3_data_bucket_name" {
+    description = "Name of the S3 bucket for storing Lambda output data"
+    type        = string
+    default     = "car-wizard-data"
 }

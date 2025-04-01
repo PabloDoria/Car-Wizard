@@ -58,12 +58,13 @@ resource "aws_ssm_document" "app_config" {
                 }
             }
         ]
-        documentRequires = {
-            runtimePlatform = {
-                operatingSystem = "Windows",
+        documentRequires = [
+            {
+                name = "runtimePlatform",
+                operatingSystem = ["Windows"],
                 architectures = ["x86_64"]
             }
-        }
+        ]
     })
 
     tags = var.common_tags

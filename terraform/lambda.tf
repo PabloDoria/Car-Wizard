@@ -56,10 +56,13 @@ resource "aws_iam_role_policy" "lambda_rds_access" {
 resource "aws_lambda_function" "data_load" {
     function_name    = var.lambda_function_name
     role            = aws_iam_role.lambda_role.arn
-    filename        = "${path.module}/../lambda/lambda_function.py"
+    
+    # Usar el archivo ZIP preparado por GitHub Actions
+    filename        = "${path.module}/lambda_function.zip"
     handler         = "lambda_function.lambda_handler"
     runtime         = "python3.9"
-    timeout         = 30
+    timeout         = 300 # Aumentado a 5 minutos para permitir tiempo suficiente para la obtención de datos
+    memory_size     = 512 # Aumentado para manejar procesamiento de DataFrames con pandas
 
     vpc_config {
         subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
@@ -72,6 +75,9 @@ resource "aws_lambda_function" "data_load" {
             RDS_DATABASE = var.rds_db_name
             RDS_USERNAME = var.rds_username
             RDS_PASSWORD = var.rds_password
+            S3_DATA_BUCKET = var.s3_data_bucket_name
+            S3_CODE_BUCKET = "car-wizard-code"
+            LOG_LEVEL    = "INFO"
         }
     }
 
@@ -81,7 +87,6 @@ resource "aws_lambda_function" "data_load" {
         create_before_destroy = true
     }
     
-    # Al establecer una dependencia, garantizamos un orden específico
     depends_on = [
         aws_iam_role.lambda_role,
         aws_security_group.lambda_sg
@@ -109,26 +114,4 @@ resource "aws_security_group" "lambda_sg" {
     }
 
     tags = var.common_tags
-}
-
-resource "aws_cloudwatch_event_rule" "schedule" {
-    name                = "trigger-car-data-update"
-    description         = "Trigger Lambda function to update car data"
-    schedule_expression = "rate(1 day)"
-
-    tags = var.common_tags
-}
-
-resource "aws_cloudwatch_event_target" "lambda_target" {
-    rule      = aws_cloudwatch_event_rule.schedule.name
-    target_id = "TriggerLambda"
-    arn       = aws_lambda_function.data_load.arn
-}
-
-resource "aws_lambda_permission" "allow_eventbridge" {
-    statement_id  = "AllowEventBridgeInvoke"
-    action        = "lambda:InvokeFunction"
-    function_name = aws_lambda_function.data_load.function_name
-    principal     = "events.amazonaws.com"
-    source_arn    = aws_cloudwatch_event_rule.schedule.arn
 } 

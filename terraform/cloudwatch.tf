@@ -22,6 +22,29 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
     }
 }
 
+# CloudWatch Event Rule para programar la ejecución diaria del Lambda a las 8:00 AM
+resource "aws_cloudwatch_event_rule" "daily_lambda_trigger" {
+  name                = "trigger-car-data-update"
+  description         = "Ejecuta la función Lambda de obtención de datos diariamente a las 8:00 AM"
+  schedule_expression = "cron(0 8 * * ? *)" # 8:00 AM todos los días
+  
+  tags = var.common_tags
+}
+
+resource "aws_cloudwatch_event_target" "lambda_target" {
+  rule      = aws_cloudwatch_event_rule.daily_lambda_trigger.name
+  target_id = "TriggerLambda"
+  arn       = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.lambda_function_name}"
+}
+
+resource "aws_lambda_permission" "allow_cloudwatch" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = var.lambda_function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.daily_lambda_trigger.arn
+}
+
 # Alarma para monitorear errores en Lambda
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
     alarm_name          = "car-wizard-lambda-errors"

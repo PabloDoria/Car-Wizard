@@ -1,6 +1,6 @@
 resource "aws_resourcegroups_group" "car_wizard" {
     name = "car-wizard-resources"
-    description = "Grupo de recursos para la aplicación Car Wizard"
+    description = "Recursos de la aplicacion Car Wizard"
 
     resource_query {
         query = jsonencode({

@@ -70,15 +70,24 @@ variable "team_members" {
     ]
 }
 
-resource "aws_iam_user" "team_members" {
+data "aws_iam_user" "existing_users" {
     for_each = toset(var.team_members)
-    name     = "car-wizard-${each.key}"
+    user_name = "car-wizard-${each.value}"
+}
 
-    tags = {
-        Project = "car-wizard"
-        Role    = "viewer"
-        Protected = "true"
+locals {
+    # Filtrar solo los usuarios que no existen
+    users_to_create = {
+        for member in var.team_members :
+        member => member
+        if can(data.aws_iam_user.existing_users[member].user_name) == false
     }
+}
+
+resource "aws_iam_user" "team_members" {
+    for_each = local.users_to_create
+    name     = "car-wizard-${each.value}"
+    tags     = var.common_tags
 
     lifecycle {
         prevent_destroy = true

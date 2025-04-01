@@ -61,3 +61,13 @@ variable "github_repo" {
     type        = string
     default     = "PabloDoria/Car-Wizard"
 }
+
+variable "team_members" {
+    description = "Lista de miembros del equipo que necesitan acceso"
+    type        = list(string)
+    default     = [
+        "anad",      # Ana D
+        "angelg",    # Angel G
+        "luism"      # Luis M
+    ]
+}

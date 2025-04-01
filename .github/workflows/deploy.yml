@@ -46,6 +46,36 @@ jobs:
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
 
+      - name: Get IAM User Credentials
+        if: success()
+        run: |
+          echo "🔐 Credenciales de acceso para los usuarios:"
+          echo "----------------------------------------"
+          for USER in "anad" "angelg" "luism"; do
+            echo "Usuario: car-wizard-$USER"
+            # Crear nuevo perfil de login y obtener la contraseña
+            PASSWORD=$(aws iam create-login-profile --user-name "car-wizard-$USER" --password-reset-required --generate-cli-skeleton output | jq -r '.Password')
+            echo "Contraseña temporal: $PASSWORD"
+            echo "URL de acceso: https://console.aws.amazon.com"
+            echo "----------------------------------------"
+          done
+        continue-on-error: true
+
+      - name: Save Credentials to Job Summary
+        if: success()
+        run: |
+          echo "### 🔐 Credenciales de acceso AWS" >> $GITHUB_STEP_SUMMARY
+          echo "Los usuarios pueden acceder a la consola de AWS en: https://console.aws.amazon.com" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Usuario | Contraseña |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|------------|" >> $GITHUB_STEP_SUMMARY
+          for USER in "anad" "angelg" "luism"; do
+            PASSWORD=$(aws iam get-login-profile --user-name "car-wizard-$USER" --query 'LoginProfile.CreateDate' --output text 2>/dev/null || echo "Contraseña pendiente de generar")
+            echo "| car-wizard-$USER | $PASSWORD |" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Importante**: Los usuarios deberán cambiar su contraseña en el primer inicio de sesión" >> $GITHUB_STEP_SUMMARY
+
   deploy:
     name: Deploy Laravel to ECS
     needs: terraform

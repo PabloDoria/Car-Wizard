@@ -361,6 +361,60 @@ jobs:
             fi
           fi
 
+      - name: Force Delete IAM Resources
+        run: |
+          echo "Eliminando recursos de IAM..."
+          
+          # 1. Eliminar usuarios del grupo
+          GROUP_NAME="car-wizard-viewers"
+          for USER in "car-wizard-luism" "car-wizard-anad" "car-wizard-angelg"; do
+            echo "Removiendo usuario $USER del grupo $GROUP_NAME..."
+            aws iam remove-user-from-group --group-name $GROUP_NAME --user-name $USER || true
+          done
+          
+          # 2. Eliminar políticas asociadas a usuarios
+          for USER in "car-wizard-luism" "car-wizard-anad" "car-wizard-angelg"; do
+            echo "Procesando políticas del usuario $USER..."
+            
+            # Desasociar políticas administradas
+            ATTACHED_POLICIES=$(aws iam list-attached-user-policies --user-name $USER --query 'AttachedPolicies[*].PolicyArn' --output text) || true
+            for POLICY_ARN in $ATTACHED_POLICIES; do
+              echo "Desvinculando política $POLICY_ARN del usuario $USER"
+              aws iam detach-user-policy --user-name $USER --policy-arn $POLICY_ARN || true
+            done
+            
+            # Eliminar políticas inline
+            INLINE_POLICIES=$(aws iam list-user-policies --user-name $USER --query 'PolicyNames[*]' --output text) || true
+            for POLICY in $INLINE_POLICIES; do
+              echo "Eliminando política inline $POLICY del usuario $USER"
+              aws iam delete-user-policy --user-name $USER --policy-name $POLICY || true
+            done
+            
+            # Eliminar el usuario
+            echo "Eliminando usuario $USER"
+            aws iam delete-user --user-name $USER || true
+          done
+          
+          # 3. Eliminar políticas del grupo
+          echo "Eliminando políticas del grupo $GROUP_NAME..."
+          # Desasociar políticas administradas del grupo
+          ATTACHED_GROUP_POLICIES=$(aws iam list-attached-group-policies --group-name $GROUP_NAME --query 'AttachedPolicies[*].PolicyArn' --output text) || true
+          for POLICY_ARN in $ATTACHED_GROUP_POLICIES; do
+            echo "Desvinculando política $POLICY_ARN del grupo"
+            aws iam detach-group-policy --group-name $GROUP_NAME --policy-arn $POLICY_ARN || true
+          done
+          
+          # 4. Eliminar el grupo
+          echo "Eliminando grupo $GROUP_NAME"
+          aws iam delete-group --group-name $GROUP_NAME || true
+          
+          # 5. Eliminar la política CarWizardViewAccess
+          POLICY_ARN=$(aws iam list-policies --query 'Policies[?PolicyName==`CarWizardViewAccess`].Arn' --output text) || true
+          if [ ! -z "$POLICY_ARN" ] && [ "$POLICY_ARN" != "None" ]; then
+            echo "Eliminando política CarWizardViewAccess"
+            aws iam delete-policy --policy-arn $POLICY_ARN || true
+          fi
+
       - name: Force Delete Service Roles
         run: |
           echo "Eliminando roles de servicio..."

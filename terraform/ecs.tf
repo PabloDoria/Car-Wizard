@@ -13,6 +13,8 @@ resource "aws_iam_role" "ecs_execution_role" {
         }
         ]
     })
+
+    tags = var.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
@@ -32,6 +34,8 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_logs_policy" {
 
 resource "aws_ecs_cluster" "ecs_cluster" {
     name = "car-wizard-cluster" # 1
+    
+    tags = var.common_tags
 }
 
 
@@ -69,6 +73,8 @@ resource "aws_ecs_task_definition" "ecs_task" {
         }
         }
     ])
+
+    tags = var.common_tags
 }
 
 
@@ -103,4 +109,6 @@ resource "aws_ecs_service" "ecs_service" {
             desired_count
         ]
     }
+
+    tags = var.common_tags
 }

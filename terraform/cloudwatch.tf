@@ -34,15 +34,23 @@ resource "aws_cloudwatch_event_rule" "daily_lambda_trigger" {
 resource "aws_cloudwatch_event_target" "lambda_target" {
   rule      = aws_cloudwatch_event_rule.daily_lambda_trigger.name
   target_id = "TriggerLambda"
-  arn       = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.lambda_function_name}"
+  arn       = aws_lambda_function.data_load.arn
+  
+  depends_on = [
+    aws_lambda_function.data_load
+  ]
 }
 
 resource "aws_lambda_permission" "allow_cloudwatch" {
   statement_id  = "AllowExecutionFromCloudWatch"
   action        = "lambda:InvokeFunction"
-  function_name = var.lambda_function_name
+  function_name = aws_lambda_function.data_load.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.daily_lambda_trigger.arn
+  
+  depends_on = [
+    aws_lambda_function.data_load
+  ]
 }
 
 # Alarma para monitorear errores en Lambda

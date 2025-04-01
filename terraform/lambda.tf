@@ -53,12 +53,14 @@ resource "aws_iam_role_policy" "lambda_rds_access" {
     })
 }
 
+# Primera etapa: crear la Lambda con código mínimo
 resource "aws_lambda_function" "data_load" {
     function_name    = var.lambda_function_name
     role            = aws_iam_role.lambda_role.arn
     
-    # Usar el archivo ZIP preparado por GitHub Actions
-    filename        = "${path.module}/lambda_function.zip"
+    # Usar código en línea para evitar problemas de tamaño
+    filename        = "${path.module}/lambda_dummy.zip"
+    source_code_hash = filebase64sha256("${path.module}/lambda_dummy.zip")
     handler         = "lambda_function.lambda_handler"
     runtime         = "python3.9"
     timeout         = 300 # Aumentado a 5 minutos para permitir tiempo suficiente para la obtención de datos
@@ -85,6 +87,10 @@ resource "aws_lambda_function" "data_load" {
     
     lifecycle {
         create_before_destroy = true
+        ignore_changes = [
+            filename,
+            source_code_hash
+        ]
     }
     
     depends_on = [

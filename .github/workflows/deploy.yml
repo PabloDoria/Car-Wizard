@@ -68,12 +68,24 @@ jobs:
           zip -r ../lambda_function.zip .
           cd ../..
           
+          # Crear archivo dummy para Terraform
+          echo "Creando archivo lambda_dummy.zip para Terraform..."
+          mkdir -p terraform/tmp_lambda
+          echo 'def lambda_handler(event, context):
+              return {"statusCode": 200, "body": "Hello from Lambda!"}
+          ' > terraform/tmp_lambda/lambda_function.py
+          cd terraform/tmp_lambda
+          zip -j ../lambda_dummy.zip lambda_function.py
+          cd ../..
+          
           # Limpiar archivos temporales
           echo "Limpiando archivos temporales..."
           rm -rf terraform/lambda_package
+          rm -rf terraform/tmp_lambda
           
-          echo "✅ Archivo Lambda preparado correctamente: terraform/lambda_function.zip"
+          echo "✅ Archivos Lambda preparados correctamente:"
           ls -la terraform/lambda_function.zip
+          ls -la terraform/lambda_dummy.zip
 
       - name: Create S3 Bucket for Lambda Data
         run: |

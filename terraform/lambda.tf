@@ -58,13 +58,28 @@ resource "aws_lambda_function" "data_load" {
     function_name    = var.lambda_function_name
     role            = aws_iam_role.lambda_role.arn
     
-    # Usar código en línea para evitar problemas de tamaño
+    # Usar un código mínimo en línea para evitar problemas de tamaño
     filename        = "${path.module}/lambda_dummy.zip"
     source_code_hash = filebase64sha256("${path.module}/lambda_dummy.zip")
     handler         = "lambda_function.lambda_handler"
     runtime         = "python3.9"
     timeout         = 300 # Aumentado a 5 minutos para permitir tiempo suficiente para la obtención de datos
     memory_size     = 512 # Aumentado para manejar procesamiento de DataFrames con pandas
+
+    # Crear una versión mínima del Lambda durante el apply
+    provisioner "local-exec" {
+        command = <<EOT
+        mkdir -p ${path.module}/tmp_lambda
+        echo 'def lambda_handler(event, context):
+            return {"statusCode": 200, "body": "Hello from Lambda!"}
+        ' > ${path.module}/tmp_lambda/lambda_function.py
+        cd ${path.module}/tmp_lambda
+        zip -j ../lambda_dummy.zip lambda_function.py
+        cd ..
+        rm -rf ${path.module}/tmp_lambda
+        EOT
+        interpreter = ["bash", "-c"]
+    }
 
     vpc_config {
         subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]

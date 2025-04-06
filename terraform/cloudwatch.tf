@@ -33,23 +33,26 @@ resource "aws_cloudwatch_event_rule" "daily_lambda_trigger" {
 
 resource "aws_cloudwatch_event_target" "lambda_target" {
   rule      = aws_cloudwatch_event_rule.daily_lambda_trigger.name
-  target_id = "TriggerLambda"
-  arn       = aws_lambda_function.data_load.arn
-  
+  target_id = "LambdaTarget"
+  arn       = aws_lambda_function.data_loader.arn
+  input     = jsonencode({
+    action = "daily_update"
+  })
+
   depends_on = [
-    aws_lambda_function.data_load
+    aws_lambda_function.data_loader
   ]
 }
 
 resource "aws_lambda_permission" "allow_cloudwatch" {
   statement_id  = "AllowExecutionFromCloudWatch"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.data_load.function_name
+  function_name = aws_lambda_function.data_loader.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.daily_lambda_trigger.arn
-  
+
   depends_on = [
-    aws_lambda_function.data_load
+    aws_lambda_function.data_loader
   ]
 }
 

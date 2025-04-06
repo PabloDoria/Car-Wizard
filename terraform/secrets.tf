@@ -23,6 +23,7 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
 # Política IAM para permitir acceso a los secretos
 resource "aws_secretsmanager_secret_policy" "db_credentials_policy" {
   secret_arn = aws_secretsmanager_secret.db_credentials.arn
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -30,14 +31,16 @@ resource "aws_secretsmanager_secret_policy" "db_credentials_policy" {
         Effect = "Allow"
         Principal = {
           AWS = [
-            aws_iam_role.ecs_task_execution_role.arn,
-            aws_iam_role.lambda_execution_role.arn
+            aws_iam_role.ecs_task_role.arn,
+            aws_iam_role.lambda_role.arn
           ]
         }
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = aws_secretsmanager_secret.db_credentials.arn
+        Resource = [
+          aws_secretsmanager_secret.db_credentials.arn
+        ]
       }
     ]
   })

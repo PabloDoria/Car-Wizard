@@ -87,7 +87,7 @@ resource "aws_lambda_function" "db_initializer" {
   }
 
   vpc_config {
-    subnet_ids         = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+    subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
     security_group_ids = [aws_security_group.lambda_sg.id]
   }
 }
@@ -109,7 +109,7 @@ resource "aws_lambda_function" "data_loader" {
   }
 
   vpc_config {
-    subnet_ids         = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+    subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
     security_group_ids = [aws_security_group.lambda_sg.id]
   }
 }

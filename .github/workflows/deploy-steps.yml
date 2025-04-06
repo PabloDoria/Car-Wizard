@@ -339,11 +339,31 @@ jobs:
 
       - name: Get RDS Endpoint
         run: |
-          DB_HOST=$(aws rds describe-db-instances --db-instance-identifier car-wizard-db --query 'DBInstances[0].Endpoint.Address' --output text)
-          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
-          echo "DB_NAME=carwizarddb" >> $GITHUB_ENV
-          echo "DB_USER=admin" >> $GITHUB_ENV
-          echo "DB_PASSWORD=${{ secrets.RDS_PASSWORD }}" >> $GITHUB_ENV
+          # Esperar hasta que la instancia RDS esté disponible
+          echo "Esperando a que la instancia RDS esté disponible..."
+          max_attempts=30
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            if aws rds describe-db-instances --db-instance-identifier car-wizard-db --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null | grep -q "available"; then
+              DB_HOST=$(aws rds describe-db-instances --db-instance-identifier car-wizard-db --query 'DBInstances[0].Endpoint.Address' --output text)
+              echo "✅ RDS está disponible en: $DB_HOST"
+              echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+              echo "DB_NAME=carwizarddb" >> $GITHUB_ENV
+              echo "DB_USER=admin" >> $GITHUB_ENV
+              echo "DB_PASSWORD=${{ secrets.RDS_PASSWORD }}" >> $GITHUB_ENV
+              break
+            else
+              echo "⏳ Intento $attempt de $max_attempts: RDS no está disponible aún..."
+              sleep 30
+              attempt=$((attempt + 1))
+            fi
+          done
+          
+          if [ $attempt -gt $max_attempts ]; then
+            echo "❌ Error: RDS no está disponible después de $max_attempts intentos"
+            exit 1
+          fi
 
       - name: Configure Laravel with Ansible
         run: |

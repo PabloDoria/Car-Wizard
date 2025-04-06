@@ -10,7 +10,7 @@ resource "aws_db_subnet_group" "rds_subnet_group" {
 
 resource "aws_db_parameter_group" "mysql_parameters" {
     family = "mysql8.0"
-    name   = "car-wizard-mysql-parameters"
+    name   = "car-wizard-mysql-parameters-${formatdate("YYYYMMDDHHmmss", timestamp())}"
 
     parameter {
         name  = "character_set_server"

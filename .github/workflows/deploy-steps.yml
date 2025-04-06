@@ -165,31 +165,44 @@ jobs:
         run: |
           mkdir -p terraform/lambda_package
           mkdir -p terraform/lambda_package/scripts
-          # Verificar si el archivo existe antes de copiarlo
+          mkdir -p terraform/lambda_package/database
+          
+          # Verificar si los archivos existen antes de copiarlos
           if [ -f "scripts/main.py" ]; then
-            cp scripts/main.py terraform/lambda_package/scripts/
+            cp scripts/main.py terraform/lambda_package/
             echo "✅ Archivo main.py copiado correctamente"
           else
             echo "❌ Error: No se encontró el archivo main.py"
             exit 1
           fi
           
-          # Generar schema.sql si no existe
-          if [ ! -f "scripts/database/schema.sql" ]; then
-            echo "Generando schema.sql..."
-            python scripts/database/schema_generator.py
+          if [ -f "scripts/database/schema_lambda.py" ]; then
+            cp scripts/database/schema_lambda.py terraform/lambda_package/
+            echo "✅ Archivo schema_lambda.py copiado correctamente"
           else
-            echo "✅ schema.sql ya existe, no es necesario generarlo"
+            echo "❌ Error: No se encontró el archivo schema_lambda.py"
+            exit 1
           fi
           
           # Copiar archivos necesarios para Lambda
-          cp scripts/database/schema.sql terraform/lambda_package/
-          cp scripts/database/db_connector.py terraform/lambda_package/
+          cp scripts/database/schema_generator.py terraform/lambda_package/database/
+          cp scripts/database/db_connector.py terraform/lambda_package/database/
+          cp scripts/database/table_create.py terraform/lambda_package/database/
           
-          # Instalar dependencias
+          # Copiar módulos de endpoints
+          cp -r scripts/endpointsCarAPI terraform/lambda_package/
+          cp -r scripts/endpointsML terraform/lambda_package/
+          
+          # Instalar dependencias para el generador de schema
+          cd terraform/lambda_package
+          pip install boto3 pymysql -t .
+          zip -r ../lambda_function_schema.zip .
+          cd ../..
+          
+          # Instalar dependencias para el cargador de datos
           cd terraform/lambda_package
           pip install pandas requests boto3 pymysql -t .
-          zip -r ../lambda_function.zip .
+          zip -r ../lambda_function_data.zip .
           cd ../..
 
       - name: Terraform Init (Lambda)

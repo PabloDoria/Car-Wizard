@@ -53,65 +53,142 @@ resource "aws_iam_role_policy" "lambda_rds_access" {
     })
 }
 
-# Primera etapa: crear la Lambda con código mínimo
-resource "aws_lambda_function" "data_load" {
-    function_name    = var.lambda_function_name
-    role            = aws_iam_role.lambda_role.arn
-    
-    # Usar un código mínimo en línea para evitar problemas de tamaño
-    filename        = "${path.module}/lambda_dummy.zip"
-    source_code_hash = filebase64sha256("${path.module}/lambda_dummy.zip")
-    handler         = "lambda_function.lambda_handler"
-    runtime         = "python3.9"
-    timeout         = 300 # Aumentado a 5 minutos para permitir tiempo suficiente para la obtención de datos
-    memory_size     = 512 # Aumentado para manejar procesamiento de DataFrames con pandas
+# Función Lambda para generar el schema
+resource "aws_lambda_function" "schema_generator" {
+  filename         = "lambda_function_schema.zip"
+  function_name    = "car-wizard-schema-generator"
+  role            = aws_iam_role.lambda_role.arn
+  handler         = "generate_schema.generate_schema_file"
+  runtime         = "python3.9"
+  timeout         = 300
+  memory_size     = 256
 
-    # Crear una versión mínima del Lambda durante el apply
-    provisioner "local-exec" {
-        command = <<EOT
-        mkdir -p ${path.module}/tmp_lambda
-        echo 'def lambda_handler(event, context):
-            return {"statusCode": 200, "body": "Hello from Lambda!"}
-        ' > ${path.module}/tmp_lambda/lambda_function.py
-        cd ${path.module}/tmp_lambda
-        zip -j ../lambda_dummy.zip lambda_function.py
-        cd ..
-        rm -rf ${path.module}/tmp_lambda
-        EOT
-        interpreter = ["bash", "-c"]
+  environment {
+    variables = {
+      DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
     }
+  }
+}
 
-    vpc_config {
-        subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
-        security_group_ids = [aws_security_group.lambda_sg.id]
-    }
+# Función Lambda para inicializar la base de datos
+resource "aws_lambda_function" "db_initializer" {
+  filename         = "lambda_function_init.zip"
+  function_name    = "car-wizard-db-initializer"
+  role            = aws_iam_role.lambda_role.arn
+  handler         = "db_initializer.lambda_handler"
+  runtime         = "python3.9"
+  timeout         = 300
+  memory_size     = 256
 
-    environment {
-        variables = {
-            RDS_ENDPOINT = aws_db_instance.rds.endpoint
-            RDS_DATABASE = var.rds_db_name
-            RDS_USERNAME = var.rds_username
-            RDS_PASSWORD = var.rds_password
-            S3_DATA_BUCKET = var.s3_data_bucket_name
-            S3_CODE_BUCKET = "car-wizard-code"
-            LOG_LEVEL    = "INFO"
-        }
+  environment {
+    variables = {
+      DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
     }
+  }
 
-    tags = var.common_tags
-    
-    lifecycle {
-        create_before_destroy = true
-        ignore_changes = [
-            filename,
-            source_code_hash
-        ]
+  vpc_config {
+    subnet_ids         = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+}
+
+# Función Lambda para cargar datos
+resource "aws_lambda_function" "data_loader" {
+  filename         = "lambda_function_data.zip"
+  function_name    = "car-wizard-data-loader"
+  role            = aws_iam_role.lambda_role.arn
+  handler         = "main.lambda_handler"
+  runtime         = "python3.9"
+  timeout         = 300
+  memory_size     = 512
+
+  environment {
+    variables = {
+      DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
     }
-    
-    depends_on = [
-        aws_iam_role.lambda_role,
-        aws_security_group.lambda_sg
-    ]
+  }
+
+  vpc_config {
+    subnet_ids         = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+}
+
+# Regla de EventBridge para ejecutar el generador de schema
+resource "aws_cloudwatch_event_rule" "schema_generator" {
+  name                = "car-wizard-schema-generator"
+  description         = "Ejecuta el generador de schema una vez al día"
+  schedule_expression = "rate(1 day)"
+}
+
+resource "aws_cloudwatch_event_target" "schema_generator" {
+  rule      = aws_cloudwatch_event_rule.schema_generator.name
+  target_id = "SchemaGenerator"
+  arn       = aws_lambda_function.schema_generator.arn
+}
+
+resource "aws_lambda_permission" "schema_generator" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.schema_generator.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.schema_generator.arn
+}
+
+# Regla de EventBridge para ejecutar el inicializador de la base de datos
+resource "aws_cloudwatch_event_rule" "db_initializer" {
+  name                = "car-wizard-db-initializer"
+  description         = "Se dispara cuando el schema se ha generado correctamente"
+  event_pattern = jsonencode({
+    source      = ["aws.lambda"],
+    detail-type = ["Lambda Function Invocation Result"],
+    detail = {
+      functionName = [aws_lambda_function.schema_generator.function_name],
+      status      = ["SUCCESS"]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "db_initializer" {
+  rule      = aws_cloudwatch_event_rule.db_initializer.name
+  target_id = "DBInitializer"
+  arn       = aws_lambda_function.db_initializer.arn
+}
+
+resource "aws_lambda_permission" "db_initializer" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.db_initializer.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.db_initializer.arn
+}
+
+# Regla de EventBridge para ejecutar el cargador de datos
+resource "aws_cloudwatch_event_rule" "data_loader" {
+  name                = "car-wizard-data-loader"
+  description         = "Se dispara cuando la base de datos se ha inicializado correctamente"
+  event_pattern = jsonencode({
+    source      = ["aws.lambda"],
+    detail-type = ["Lambda Function Invocation Result"],
+    detail = {
+      functionName = [aws_lambda_function.db_initializer.function_name],
+      status      = ["SUCCESS"]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "data_loader" {
+  rule      = aws_cloudwatch_event_rule.data_loader.name
+  target_id = "DataLoader"
+  arn       = aws_lambda_function.data_loader.arn
+}
+
+resource "aws_lambda_permission" "data_loader" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.data_loader.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.data_loader.arn
 }
 
 resource "aws_security_group" "lambda_sg" {

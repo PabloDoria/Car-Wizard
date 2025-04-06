@@ -3,81 +3,47 @@ from endpointsCarAPI.GetEngines import get_engines_by_trim_ids
 from endpointsCarAPI.GetBodies import get_bodies_by_trim_ids
 from endpointsCarAPI.GetMileages import get_mileages_by_trim_ids
 from endpointsCarAPI.GetTrims import get_trims_and_models
-from database.table_create import generate_create_table
 from endpointsCarAPI.GetYears import get_filtered_years_df
 from endpointsCarAPI.GetMakes import get_specific_makes_df
 from endpointsCarAPI.GetModels import get_specific_models_df
-from database.schema_generator import generate_schema
 import os
 import json
-import boto3
 from datetime import datetime
-from database import get_db_credentials, get_db_connection
+from database.db_connector import get_db_credentials, get_db_connection
 
 def check_schema_exists():
     """
-    Verifica si el schema.sql ya existe y si la base de datos ya está inicializada.
+    Verifica si el schema existe y las tablas están creadas.
     """
-    schema_path = os.path.join(os.path.dirname(__file__), 'database', 'schema.sql')
-    
-    # Verificar si el archivo existe
-    if not os.path.exists(schema_path):
-        return False
-        
-    # Verificar si la base de datos ya está inicializada
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
             cursor.execute("SHOW TABLES")
             tables = cursor.fetchall()
-            return len(tables) > 0
+            required_tables = {'years', 'makes', 'models', 'engines', 'bodies', 'mileages', 'make_models', 'trims'}
+            existing_tables = {table['Tables_in_carwizarddb'] for table in tables}
+            
+            if not required_tables.issubset(existing_tables):
+                missing_tables = required_tables - existing_tables
+                raise Exception(f"Faltan las siguientes tablas: {missing_tables}")
+                
+            return True
     except Exception as e:
-        print(f"Error al verificar la base de datos: {str(e)}")
+        print(f"Error al verificar el schema: {str(e)}")
         return False
     finally:
         if 'conn' in locals():
             conn.close()
 
-def generate_schema():
-    """
-    Genera el archivo schema.sql si no existe o si la base de datos no está inicializada.
-    """
-    if check_schema_exists():
-        print("✅ La base de datos ya está inicializada")
-        return
-        
-    print("Generando schema.sql...")
-    # Paso 1: obtener los trims filtrados
-    trims_df = get_filtered_trims_df()
-
-    trims, make_models = get_trims_and_models(trims_df["id"].tolist())
-
-    years = generate_create_table(get_filtered_years_df(), "years", primary_key="year")
-    makes = generate_create_table(get_specific_makes_df(), "makes", primary_key="id")
-    models = generate_create_table(get_specific_models_df(), "models", primary_key="name")
-    engines = generate_create_table(get_engines_by_trim_ids(trims_df["id"].tolist()), "engines", primary_key="id")
-    bodies = generate_create_table(get_bodies_by_trim_ids(trims_df["id"].tolist()), "bodies", primary_key="id")
-    mileages = generate_create_table(get_mileages_by_trim_ids(trims_df["id"].tolist()), "mileages", primary_key="id")
-    make_models = generate_create_table(make_models, "make_models", primary_key="id", 
-                                        foreign_keys={"make_id": ("makes", "id"), 
-                                                    "name": ("models", "name")})
-    trims = generate_create_table(trims, "trims", primary_key="id", 
-                                        foreign_keys={"year_id": ("years", "year"), 
-                                                    "engine_id": ("engines", "id"),
-                                                    "body_id": ("bodies", "id"), 
-                                                    "make_model_id": ("make_models", "id"), 
-                                                    "mileage_id": ("mileages", "id")})
-
-    generate_schema([years, makes, models, engines, bodies, mileages, make_models, trims])
-
 def lambda_handler(event, context):
     """
-    Manejador principal de la función Lambda.
+    Manejador principal de la función Lambda para cargar datos en la base de datos.
     """
     try:
-        # Verificar y generar schema si es necesario
-        generate_schema()
-        
+        # Verificar que el schema existe
+        if not check_schema_exists():
+            raise Exception("El schema no está inicializado. Por favor, ejecute primero el generador de schema.")
+            
         # Obtener credenciales de la base de datos
         credentials = get_db_credentials()
         if not credentials:

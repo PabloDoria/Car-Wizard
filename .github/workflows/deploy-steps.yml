@@ -165,8 +165,28 @@ jobs:
         run: |
           mkdir -p terraform/lambda_package
           mkdir -p terraform/lambda_package/scripts
-          cp scripts/ObtencionDatos.py terraform/lambda_package/scripts/
-          cp lambda/lambda_function.py terraform/lambda_package/
+          # Verificar si el archivo existe antes de copiarlo
+          if [ -f "scripts/main.py" ]; then
+            cp scripts/main.py terraform/lambda_package/scripts/
+            echo "✅ Archivo main.py copiado correctamente"
+          else
+            echo "❌ Error: No se encontró el archivo main.py"
+            exit 1
+          fi
+          
+          # Generar schema.sql si no existe
+          if [ ! -f "scripts/database/schema.sql" ]; then
+            echo "Generando schema.sql..."
+            python scripts/database/schema_generator.py
+          else
+            echo "✅ schema.sql ya existe, no es necesario generarlo"
+          fi
+          
+          # Copiar archivos necesarios para Lambda
+          cp scripts/database/schema.sql terraform/lambda_package/
+          cp scripts/database/db_connector.py terraform/lambda_package/
+          
+          # Instalar dependencias
           cd terraform/lambda_package
           pip install pandas requests boto3 pymysql -t .
           zip -r ../lambda_function.zip .

@@ -185,7 +185,7 @@ jobs:
           fi
           
           # Copiar archivos necesarios para Lambda
-          cp scripts/database/schema_generator.py terraform/lambda_package/database/
+          cp scripts/database/generate_schema.py terraform/lambda_package/
           cp scripts/database/db_connector.py terraform/lambda_package/database/
           cp scripts/database/table_create.py terraform/lambda_package/database/
           
@@ -195,7 +195,7 @@ jobs:
           
           # Instalar dependencias para el generador de schema
           cd terraform/lambda_package
-          pip install boto3 pymysql -t .
+          pip install boto3 pymysql pandas requests -t .
           zip -r ../lambda_function_schema.zip .
           cd ../..
           
@@ -214,7 +214,9 @@ jobs:
       - name: Terraform Plan (Lambda)
         working-directory: terraform
         run: |
-          terraform plan -target=aws_lambda_function.data_load \
+          terraform plan -target=aws_lambda_function.schema_generator \
+                        -target=aws_lambda_function.db_initializer \
+                        -target=aws_lambda_function.data_loader \
                         -target=aws_cloudwatch_log_group.lambda_logs \
                         -target=aws_cloudwatch_event_rule.daily_lambda_trigger \
                         -target=aws_cloudwatch_event_target.lambda_target \
@@ -231,7 +233,9 @@ jobs:
         run: |
           echo "❌ Error en el despliegue de Lambda. Iniciando rollback..."
           terraform destroy -auto-approve \
-            -target=aws_lambda_function.data_load \
+            -target=aws_lambda_function.schema_generator \
+            -target=aws_lambda_function.db_initializer \
+            -target=aws_lambda_function.data_loader \
             -target=aws_cloudwatch_log_group.lambda_logs \
             -target=aws_cloudwatch_event_rule.daily_lambda_trigger \
             -target=aws_cloudwatch_event_target.lambda_target

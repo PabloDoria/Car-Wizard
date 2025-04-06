@@ -68,6 +68,11 @@ resource "aws_lambda_function" "schema_generator" {
       DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
     }
   }
+
+  vpc_config {
+    subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
 }
 
 # Función Lambda para inicializar la base de datos

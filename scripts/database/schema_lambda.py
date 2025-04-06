@@ -3,6 +3,7 @@ import json
 import time
 from datetime import datetime
 from db_connector import get_db_connection
+import generate_schema
 
 def wait_for_rds(max_retries=30, delay=10):
     """

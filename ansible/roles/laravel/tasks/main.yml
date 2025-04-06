@@ -2,19 +2,19 @@
 - name: Create .env file
   template:
     src: .env.j2
-    dest: "{{ playbook_dir }}/../../../app/.env"
+    dest: "{{ playbook_dir }}/../../app/app/.env"
     mode: '0644'
 
 - name: Set storage directory permissions
   file:
-    path: "{{ playbook_dir }}/../../../app/storage"
+    path: "{{ playbook_dir }}/../../app/app/storage"
     state: directory
     mode: '0777'
     recurse: yes
 
 - name: Set bootstrap/cache directory permissions
   file:
-    path: "{{ playbook_dir }}/../../../app/bootstrap/cache"
+    path: "{{ playbook_dir }}/../../app/app/bootstrap/cache"
     state: directory
     mode: '0777'
     recurse: yes
@@ -22,5 +22,5 @@
 - name: Configure PHP settings
   template:
     src: php.ini.j2
-    dest: "{{ playbook_dir }}/../../../docker/php.ini"
+    dest: "{{ playbook_dir }}/../../docker/php.ini"
     mode: '0644' 

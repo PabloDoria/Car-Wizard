@@ -12,16 +12,16 @@
     db_password: "{{ lookup('env', 'DB_PASSWORD') }}"
 
   roles:
-    - role: laravel
+    - role: ../roles/laravel
       tags: [laravel]
-    - role: docker
+    - role: ../roles/docker
       tags: [docker]
 
   tasks:
     - name: Install Composer dependencies
       composer:
         command: install
-        working_dir: "{{ playbook_dir }}/../../app"
+        working_dir: "{{ playbook_dir }}/../../app/app"
         no_dev: yes
         optimize_autoloader: yes
       tags: [composer]
@@ -29,20 +29,20 @@
     - name: Generate Laravel key
       command: php artisan key:generate
       args:
-        chdir: "{{ playbook_dir }}/../../app"
+        chdir: "{{ playbook_dir }}/../../app/app"
       when: app_env == "production"
       tags: [laravel]
 
     - name: Run database migrations
       command: php artisan migrate --force
       args:
-        chdir: "{{ playbook_dir }}/../../app"
+        chdir: "{{ playbook_dir }}/../../app/app"
       when: app_env == "production"
       tags: [laravel]
 
     - name: Optimize Laravel
       command: php artisan optimize
       args:
-        chdir: "{{ playbook_dir }}/../../app"
+        chdir: "{{ playbook_dir }}/../../app/app"
       when: app_env == "production"
       tags: [laravel] 

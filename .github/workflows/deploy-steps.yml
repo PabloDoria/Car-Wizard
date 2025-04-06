@@ -166,8 +166,10 @@ jobs:
           mkdir -p terraform/lambda_package
           mkdir -p terraform/lambda_package/scripts
           mkdir -p terraform/lambda_package/database
+          mkdir -p terraform/lambda_package/endpointsML
+          mkdir -p terraform/lambda_package/endpointsCarAPI
           
-          # Verificar si los archivos existen antes de copiarlos
+          # Verificar y copiar archivos principales
           if [ -f "scripts/main.py" ]; then
             cp scripts/main.py terraform/lambda_package/
             echo "✅ Archivo main.py copiado correctamente"
@@ -184,14 +186,26 @@ jobs:
             exit 1
           fi
           
-          # Copiar archivos necesarios para Lambda
-          cp scripts/database/generate_schema.py terraform/lambda_package/
+          # Copiar directorios si existen y no están vacíos
+          if [ -d "scripts/endpointsML" ] && [ "$(ls -A scripts/endpointsML)" ]; then
+            cp -r scripts/endpointsML/* terraform/lambda_package/endpointsML/
+            echo "✅ Directorio endpointsML copiado correctamente"
+          else
+            echo "⚠️ Advertencia: El directorio endpointsML está vacío o no existe"
+            touch terraform/lambda_package/endpointsML/.keep
+          fi
+          
+          if [ -d "scripts/endpointsCarAPI" ] && [ "$(ls -A scripts/endpointsCarAPI)" ]; then
+            cp -r scripts/endpointsCarAPI/* terraform/lambda_package/endpointsCarAPI/
+            echo "✅ Directorio endpointsCarAPI copiado correctamente"
+          else
+            echo "⚠️ Advertencia: El directorio endpointsCarAPI está vacío o no existe"
+            touch terraform/lambda_package/endpointsCarAPI/.keep
+          fi
+          
+          # Copiar archivos de base de datos
           cp scripts/database/db_connector.py terraform/lambda_package/database/
           cp scripts/database/table_create.py terraform/lambda_package/database/
-          
-          # Copiar módulos de endpoints
-          cp -r scripts/endpointsCarAPI terraform/lambda_package/
-          cp -r scripts/endpointsML terraform/lambda_package/
           
           # Instalar dependencias para el generador de schema
           cd terraform/lambda_package
@@ -232,6 +246,11 @@ jobs:
         working-directory: terraform
         run: |
           echo "❌ Error en el despliegue de Lambda. Iniciando rollback..."
+          # Inicializar Terraform antes del rollback
+          terraform init
+          terraform workspace select lambda || terraform workspace new lambda
+          
+          # Ejecutar el rollback
           terraform destroy -auto-approve \
             -target=aws_lambda_function.schema_generator \
             -target=aws_lambda_function.db_initializer \
@@ -322,12 +341,11 @@ jobs:
         run: |
           DB_HOST=$(aws rds describe-db-instances --db-instance-identifier car-wizard-db --query 'DBInstances[0].Endpoint.Address' --output text)
           echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+          echo "DB_NAME=carwizarddb" >> $GITHUB_ENV
+          echo "DB_USER=admin" >> $GITHUB_ENV
+          echo "DB_PASSWORD=${{ secrets.RDS_PASSWORD }}" >> $GITHUB_ENV
 
       - name: Configure Laravel with Ansible
-        env:
-          DB_NAME: carwizarddb
-          DB_USER: admin
-          DB_PASSWORD: ${{ secrets.RDS_PASSWORD }}
         run: |
           cd ansible
           ansible-playbook playbooks/configure-laravel.yml

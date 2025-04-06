@@ -32,4 +32,4 @@ def generate_create_table(df, table_name, primary_key=None, foreign_keys=None):
             columns.append(fk)
 
     columns_str = ",\n".join(columns)
-    return f"CREATE TABLE {table_name} (\n{columns_str}\n);"
+    return f"CREATE TABLE IF NOT EXISTS {table_name} (\n{columns_str}\n);"

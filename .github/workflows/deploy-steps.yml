@@ -1,0 +1,348 @@
+name: Deploy Infrastructure & Laravel App (Step by Step)
+
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: 'Paso a ejecutar'
+        required: true
+        type: choice
+        options:
+          - networking
+          - database
+          - lambda
+          - ecs
+          - app
+          - all
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: car-wizard
+  ECS_CLUSTER: car-wizard-cluster
+  ECS_SERVICE: car-wizard-service
+  ECS_TASK_DEFINITION: ecs/task-definition.json
+  LAMBDA_FUNCTION_NAME: LoadDataLambda
+  TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
+
+jobs:
+  deploy-networking:
+    name: Deploy Networking Infrastructure
+    runs-on: ubuntu-latest
+    if: github.event.inputs.step == 'networking' || github.event.inputs.step == 'all'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init (Networking)
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform workspace select networking || terraform workspace new networking
+
+      - name: Terraform Plan (Networking)
+        working-directory: terraform
+        run: |
+          terraform plan -target=aws_vpc.vpc \
+                        -target=aws_subnet.subnet_1 \
+                        -target=aws_subnet.subnet_2 \
+                        -target=aws_subnet.subnet_3 \
+                        -target=aws_subnet.subnet_4 \
+                        -target=aws_subnet.subnet_5 \
+                        -target=aws_subnet.subnet_6 \
+                        -target=aws_internet_gateway.igw \
+                        -target=aws_security_group.alb_sg \
+                        -target=aws_security_group.rds_sg \
+                        -target=aws_security_group.ecs_tasks_sg \
+                        -out=tfplan
+
+      - name: Terraform Apply (Networking)
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+        continue-on-error: true
+
+      - name: Rollback on Failure
+        if: failure()
+        working-directory: terraform
+        run: |
+          echo "❌ Error en el despliegue de networking. Iniciando rollback..."
+          terraform destroy -auto-approve \
+            -target=aws_vpc.vpc \
+            -target=aws_subnet.subnet_1 \
+            -target=aws_subnet.subnet_2 \
+            -target=aws_subnet.subnet_3 \
+            -target=aws_subnet.subnet_4 \
+            -target=aws_subnet.subnet_5 \
+            -target=aws_subnet.subnet_6 \
+            -target=aws_internet_gateway.igw \
+            -target=aws_security_group.alb_sg \
+            -target=aws_security_group.rds_sg \
+            -target=aws_security_group.ecs_tasks_sg
+          exit 1
+
+  deploy-database:
+    name: Deploy Database Infrastructure
+    needs: deploy-networking
+    runs-on: ubuntu-latest
+    if: github.event.inputs.step == 'database' || github.event.inputs.step == 'all'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init (Database)
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform workspace select database || terraform workspace new database
+
+      - name: Terraform Plan (Database)
+        working-directory: terraform
+        run: |
+          terraform plan -target=aws_db_subnet_group.rds_subnet_group \
+                        -target=aws_db_parameter_group.mysql_parameters \
+                        -target=aws_db_instance.rds \
+                        -out=tfplan
+
+      - name: Terraform Apply (Database)
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+        continue-on-error: true
+
+      - name: Rollback on Failure
+        if: failure()
+        working-directory: terraform
+        run: |
+          echo "❌ Error en el despliegue de la base de datos. Iniciando rollback..."
+          terraform destroy -auto-approve \
+            -target=aws_db_subnet_group.rds_subnet_group \
+            -target=aws_db_parameter_group.mysql_parameters \
+            -target=aws_db_instance.rds
+          exit 1
+
+  deploy-lambda:
+    name: Deploy Lambda Infrastructure
+    needs: [deploy-networking, deploy-database]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.step == 'lambda' || github.event.inputs.step == 'all'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Prepare Lambda Files
+        run: |
+          mkdir -p terraform/lambda_package
+          mkdir -p terraform/lambda_package/scripts
+          cp scripts/ObtencionDatos.py terraform/lambda_package/scripts/
+          cp lambda/lambda_function.py terraform/lambda_package/
+          cd terraform/lambda_package
+          pip install pandas requests boto3 pymysql -t .
+          zip -r ../lambda_function.zip .
+          cd ../..
+
+      - name: Terraform Init (Lambda)
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform workspace select lambda || terraform workspace new lambda
+
+      - name: Terraform Plan (Lambda)
+        working-directory: terraform
+        run: |
+          terraform plan -target=aws_lambda_function.data_load \
+                        -target=aws_cloudwatch_log_group.lambda_logs \
+                        -target=aws_cloudwatch_event_rule.daily_lambda_trigger \
+                        -target=aws_cloudwatch_event_target.lambda_target \
+                        -out=tfplan
+
+      - name: Terraform Apply (Lambda)
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+        continue-on-error: true
+
+      - name: Rollback on Failure
+        if: failure()
+        working-directory: terraform
+        run: |
+          echo "❌ Error en el despliegue de Lambda. Iniciando rollback..."
+          terraform destroy -auto-approve \
+            -target=aws_lambda_function.data_load \
+            -target=aws_cloudwatch_log_group.lambda_logs \
+            -target=aws_cloudwatch_event_rule.daily_lambda_trigger \
+            -target=aws_cloudwatch_event_target.lambda_target
+          exit 1
+
+  deploy-ecs:
+    name: Deploy ECS Infrastructure
+    needs: [deploy-networking, deploy-database]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.step == 'ecs' || github.event.inputs.step == 'all'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init (ECS)
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform workspace select ecs || terraform workspace new ecs
+
+      - name: Terraform Plan (ECS)
+        working-directory: terraform
+        run: |
+          terraform plan -target=aws_ecs_cluster.ecs_cluster \
+                        -target=aws_ecs_task_definition.ecs_task \
+                        -target=aws_ecs_service.ecs_service \
+                        -target=aws_ecr_repository.ecr_repo \
+                        -out=tfplan
+
+      - name: Terraform Apply (ECS)
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+        continue-on-error: true
+
+      - name: Rollback on Failure
+        if: failure()
+        working-directory: terraform
+        run: |
+          echo "❌ Error en el despliegue de ECS. Iniciando rollback..."
+          terraform destroy -auto-approve \
+            -target=aws_ecs_cluster.ecs_cluster \
+            -target=aws_ecs_task_definition.ecs_task \
+            -target=aws_ecs_service.ecs_service \
+            -target=aws_ecr_repository.ecr_repo
+          exit 1
+
+  deploy-app:
+    name: Deploy Laravel Application
+    needs: [deploy-networking, deploy-database, deploy-ecs]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.step == 'app' || github.event.inputs.step == 'all'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+
+      - name: Get RDS Endpoint
+        run: |
+          DB_HOST=$(aws rds describe-db-instances --db-instance-identifier car-wizard-db --query 'DBInstances[0].Endpoint.Address' --output text)
+          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+
+      - name: Configure Laravel with Ansible
+        env:
+          DB_NAME: carwizarddb
+          DB_USER: admin
+          DB_PASSWORD: ${{ secrets.RDS_PASSWORD }}
+        run: |
+          cd ansible
+          ansible-playbook playbooks/configure-laravel.yml
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push Docker image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Update ECS Task Definition
+        run: |
+          sed -i 's|<IMAGE>|'"$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"'|g' $ECS_TASK_DEFINITION
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          wait-for-service-stability: true
+
+  verify-deployment:
+    name: Verify Deployment
+    needs: [deploy-networking, deploy-database, deploy-lambda, deploy-ecs, deploy-app]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify Resources
+        run: |
+          echo "Verificando recursos desplegados..."
+          
+          # Verificar VPC
+          aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query 'Vpcs[*].[VpcId,State]' --output text
+          
+          # Verificar RDS
+          aws rds describe-db-instances --db-instance-identifier car-wizard-db --query 'DBInstances[*].[DBInstanceStatus]' --output text
+          
+          # Verificar Lambda
+          aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME --query 'Configuration.LastModified' --output text
+          
+          # Verificar ECS
+          aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[*].[status,runningCount,desiredCount]' --output text 

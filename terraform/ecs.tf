@@ -40,16 +40,17 @@ resource "aws_ecs_cluster" "ecs_cluster" {
 
 
 resource "aws_ecs_task_definition" "ecs_task" {
-    family                   = "car-wizard-task"
+    family                   = "car-wizard"
     network_mode             = "awsvpc"
     requires_compatibilities = ["FARGATE"]
+    cpu                      = 256
+    memory                   = 512
     execution_role_arn       = aws_iam_role.ecs_execution_role.arn
-    cpu                      = "256"
-    memory                   = "512"
+    task_role_arn            = aws_iam_role.ecs_task_role.arn
 
     container_definitions = jsonencode([
         {
-        name      = "car-wizard-container"
+        name      = "car-wizard"
         image     = "${aws_ecr_repository.ecr_repo.repository_url}:latest"
         cpu       = 256
         memory    = 512
@@ -63,11 +64,22 @@ resource "aws_ecs_task_definition" "ecs_task" {
             }
         ]
 
+        environment = [
+            {
+            name  = "APP_ENV"
+            value = "production"
+            },
+            {
+            name  = "DB_SECRET_ARN"
+            value = aws_secretsmanager_secret.db_credentials.arn
+            }
+        ]
+
         logConfiguration = {
             logDriver = "awslogs"
             options = {
             "awslogs-group"         = "/ecs/car-wizard"
-            "awslogs-region"        = "us-east-1"
+            "awslogs-region"        = var.aws_region
             "awslogs-stream-prefix" = "ecs"
             }
         }
@@ -98,7 +110,7 @@ resource "aws_ecs_service" "ecs_service" {
 
     load_balancer {
         target_group_arn = aws_lb_target_group.alb_target.arn
-        container_name   = "car-wizard-container"
+        container_name   = "car-wizard"
         container_port   = 80
     }
 
@@ -111,4 +123,43 @@ resource "aws_ecs_service" "ecs_service" {
     }
 
     tags = var.common_tags
+}
+
+# Rol IAM para la tarea ECS
+resource "aws_iam_role" "ecs_task_role" {
+    name = "car-wizard-ecs-task-role"
+
+    assume_role_policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+        {
+            Action = "sts:AssumeRole"
+            Effect = "Allow"
+            Principal = {
+            Service = "ecs-tasks.amazonaws.com"
+            }
+        }
+        ]
+    })
+}
+
+# Política para permitir acceso a Secrets Manager
+resource "aws_iam_role_policy" "ecs_task_secrets_policy" {
+    name = "car-wizard-ecs-task-secrets-policy"
+    role = aws_iam_role.ecs_task_role.id
+
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+        {
+            Effect = "Allow"
+            Action = [
+            "secretsmanager:GetSecretValue"
+            ]
+            Resource = [
+            aws_secretsmanager_secret.db_credentials.arn
+            ]
+        }
+        ]
+    })
 }

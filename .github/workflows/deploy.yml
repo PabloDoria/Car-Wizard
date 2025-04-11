@@ -45,6 +45,12 @@ jobs:
 
       - name: Check Existing Resources
         run: |
+          # Verificar VPC existente
+          if aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text 2>/dev/null; then
+            echo "VPC ya existe, omitiendo creación..."
+            export SKIP_VPC=true
+          fi
+          
           # Verificar recursos existentes
           if aws iam get-role --role-name car-wizard-ecs-task-role 2>/dev/null; then
             echo "IAM Role ya existe, omitiendo creación..."
@@ -64,7 +70,9 @@ jobs:
       - name: Terraform Plan
         run: |
           # Crear plan sin los recursos que ya existen
-          if [ -n "$SKIP_IAM_ROLE" ]; then
+          if [ -n "$SKIP_VPC" ]; then
+            terraform plan -out=tfplan -target="!aws_vpc.vpc"
+          elif [ -n "$SKIP_IAM_ROLE" ]; then
             terraform plan -out=tfplan -target="!aws_iam_role.ecs_task_role"
           elif [ -n "$SKIP_SECRET" ]; then
             terraform plan -out=tfplan -target="!aws_secretsmanager_secret.db_credentials"

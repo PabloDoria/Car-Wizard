@@ -27,28 +27,81 @@ jobs:
         with:
           terraform_version: "1.0.0"
 
+      - name: Cleanup Existing Workspaces
+        run: |
+          # Listar todos los workspaces
+          for workspace in $(terraform workspace list); do
+            if [ "$workspace" != "default" ]; then
+              echo "Eliminando workspace: $workspace"
+              terraform workspace select $workspace
+              terraform workspace delete $workspace
+            fi
+          done
+          # Seleccionar workspace default
+          terraform workspace select default || terraform workspace new default
+
       - name: Terraform Init
         run: terraform init
 
-      - name: Select Default Workspace
+      - name: Check Existing Resources
         run: |
-          terraform workspace select default || terraform workspace new default
+          # Verificar recursos existentes
+          if aws iam get-role --role-name car-wizard-ecs-task-role 2>/dev/null; then
+            echo "IAM Role ya existe, omitiendo creación..."
+            export SKIP_IAM_ROLE=true
+          fi
+          
+          if aws secretsmanager describe-secret --secret-id car-wizard/db-credentials 2>/dev/null; then
+            echo "Secrets Manager Secret ya existe, omitiendo creación..."
+            export SKIP_SECRET=true
+          fi
+          
+          if aws rds describe-db-subnet-groups --db-subnet-group-name car-wizard-rds-subnet-group 2>/dev/null; then
+            echo "RDS Subnet Group ya existe, omitiendo creación..."
+            export SKIP_RDS_SUBNET=true
+          fi
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
+        run: |
+          # Crear plan sin los recursos que ya existen
+          if [ -n "$SKIP_IAM_ROLE" ]; then
+            terraform plan -out=tfplan -target="!aws_iam_role.ecs_task_role"
+          elif [ -n "$SKIP_SECRET" ]; then
+            terraform plan -out=tfplan -target="!aws_secretsmanager_secret.db_credentials"
+          elif [ -n "$SKIP_RDS_SUBNET" ]; then
+            terraform plan -out=tfplan -target="!aws_db_subnet_group.rds_subnet_group"
+          else
+            terraform plan -out=tfplan
+          fi
 
       - name: Terraform Apply
         run: |
-          # Aplicar solo los recursos que no existen
-          terraform apply -auto-approve -target=aws_vpc.vpc
-          terraform apply -auto-approve -target=aws_subnet.subnet_1 -target=aws_subnet.subnet_2
-          terraform apply -auto-approve -target=aws_security_group.alb_sg -target=aws_security_group.ecs_tasks_sg
-          terraform apply -auto-approve -target=aws_ecs_cluster.ecs_cluster
-          terraform apply -auto-approve -target=aws_ecr_repository.ecr_repo
-          terraform apply -auto-approve -target=aws_lb_target_group.alb_target
-          terraform apply -auto-approve -target=aws_db_parameter_group.mysql_parameters
-          terraform apply -auto-approve -target=aws_cloudwatch_log_group.lambda_logs
-          terraform apply -auto-approve -target=aws_cloudwatch_event_rule.daily_lambda_trigger
+          # Aplicar el plan
+          terraform apply -auto-approve tfplan
+
+      - name: Verify Resources
+        run: |
+          echo "🔍 Verificando recursos creados..."
+          
+          # Verificar VPC
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
+          echo "✅ VPC: $VPC_ID"
+          
+          # Verificar Subnets
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[*].SubnetId" --output text)
+          echo "✅ Subnets: $SUBNETS"
+          
+          # Verificar Security Groups
+          SGS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[*].GroupId" --output text)
+          echo "✅ Security Groups: $SGS"
+          
+          # Verificar RDS
+          RDS_ID=$(aws rds describe-db-instances --query "DBInstances[?DBInstanceIdentifier=='car-wizard-db'].DBInstanceIdentifier" --output text)
+          echo "✅ RDS: $RDS_ID"
+          
+          # Verificar Lambda
+          LAMBDA=$(aws lambda get-function --function-name LoadDataLambda --query "Configuration.FunctionName" --output text)
+          echo "✅ Lambda: $LAMBDA"
 
   deploy:
     needs: terraform
@@ -81,18 +134,30 @@ jobs:
       - name: Configure Laravel with Ansible
         run: |
           cd ansible
-          # Crear php.ini.j2 si no existe
+          # Crear inventario local
+          cat > inventory.ini << EOL
+          [local]
+          localhost ansible_connection=local
+          EOL
+          
+          # Crear php.ini.j2 en la ubicación correcta
+          mkdir -p roles/docker/templates
+          cat > roles/docker/templates/php.ini.j2 << EOL
+          [PHP]
+          memory_limit = 256M
+          upload_max_filesize = 64M
+          post_max_size = 64M
+          max_execution_time = 300
+          EOL
+          
+          # Verificar que el archivo se creó
           if [ ! -f roles/docker/templates/php.ini.j2 ]; then
-            mkdir -p roles/docker/templates
-            cat > roles/docker/templates/php.ini.j2 << EOL
-            [PHP]
-            memory_limit = 256M
-            upload_max_filesize = 64M
-            post_max_size = 64M
-            max_execution_time = 300
-            EOL
+            echo "Error: No se pudo crear php.ini.j2"
+            exit 1
           fi
-          ansible-playbook -i localhost, playbooks/laravel.yml
+          
+          # Ejecutar playbook con inventario explícito
+          ansible-playbook -i inventory.ini playbooks/laravel.yml
 
   verify-lambda:
     needs: deploy

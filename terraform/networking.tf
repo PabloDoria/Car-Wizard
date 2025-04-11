@@ -7,13 +7,17 @@ resource "aws_vpc" "vpc" {
     tags = var.common_tags
 }
 
+# Subnets públicas
 resource "aws_subnet" "subnet_1" {
     vpc_id                  = aws_vpc.vpc.id
     cidr_block              = "10.0.1.0/24"
     availability_zone       = "us-east-1a"
     map_public_ip_on_launch = true
     
-    tags = var.common_tags
+    tags = merge(var.common_tags, {
+        Name = "car-wizard-public-1a"
+        Type = "public"
+    })
 }
 
 resource "aws_subnet" "subnet_2" {
@@ -22,37 +26,87 @@ resource "aws_subnet" "subnet_2" {
     availability_zone       = "us-east-1b"
     map_public_ip_on_launch = true
     
+    tags = merge(var.common_tags, {
+        Name = "car-wizard-public-1b"
+        Type = "public"
+    })
+}
+
+# Subnets privadas
+resource "aws_subnet" "subnet_private_1" {
+    vpc_id                  = aws_vpc.vpc.id
+    cidr_block              = "10.0.3.0/24"
+    availability_zone       = "us-east-1a"
+    map_public_ip_on_launch = false
+    
+    tags = merge(var.common_tags, {
+        Name = "car-wizard-private-1a"
+        Type = "private"
+    })
+}
+
+resource "aws_subnet" "subnet_private_2" {
+    vpc_id                  = aws_vpc.vpc.id
+    cidr_block              = "10.0.4.0/24"
+    availability_zone       = "us-east-1b"
+    map_public_ip_on_launch = false
+    
+    tags = merge(var.common_tags, {
+        Name = "car-wizard-private-1b"
+        Type = "private"
+    })
+}
+
+# Elastic IP para NAT Gateway
+resource "aws_eip" "nat" {
+    domain = "vpc"
     tags = var.common_tags
 }
 
-resource "aws_subnet" "subnet_3" {
-    vpc_id                  = aws_vpc.vpc.id
-    cidr_block              = "10.0.3.0/24"
-    availability_zone       = "us-east-1c"
-    map_public_ip_on_launch = true
+# NAT Gateway
+resource "aws_nat_gateway" "nat" {
+    allocation_id = aws_eip.nat.id
+    subnet_id     = aws_subnet.subnet_1.id
+    
+    tags = var.common_tags
+    
+    depends_on = [aws_internet_gateway.igw]
 }
 
-resource "aws_subnet" "subnet_4" {
-    vpc_id                  = aws_vpc.vpc.id
-    cidr_block              = "10.0.4.0/24"
-    availability_zone       = "us-east-1d"
-    map_public_ip_on_launch = true
+# Route Table para subnets privadas
+resource "aws_route_table" "private_rt" {
+    vpc_id = aws_vpc.vpc.id
+
+    route {
+        cidr_block     = "0.0.0.0/0"
+        nat_gateway_id = aws_nat_gateway.nat.id
+    }
+
+    tags = merge(var.common_tags, {
+        Name = "car-wizard-private-rt"
+    })
 }
 
-resource "aws_subnet" "subnet_5" {
-    vpc_id                  = aws_vpc.vpc.id
-    cidr_block              = "10.0.5.0/24"
-    availability_zone       = "us-east-1e"
-    map_public_ip_on_launch = true
+# Asociaciones de Route Tables
+resource "aws_route_table_association" "private_1" {
+    subnet_id      = aws_subnet.subnet_private_1.id
+    route_table_id = aws_route_table.private_rt.id
 }
 
-resource "aws_subnet" "subnet_6" {
-    vpc_id                  = aws_vpc.vpc.id
-    cidr_block              = "10.0.6.0/24"
-    availability_zone       = "us-east-1f"
-    map_public_ip_on_launch = true
+resource "aws_route_table_association" "private_2" {
+    subnet_id      = aws_subnet.subnet_private_2.id
+    route_table_id = aws_route_table.private_rt.id
 }
 
+resource "aws_route_table_association" "public_1" {
+    subnet_id      = aws_subnet.subnet_1.id
+    route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_route_table_association" "public_2" {
+    subnet_id      = aws_subnet.subnet_2.id
+    route_table_id = aws_route_table.public_rt.id
+}
 
 resource "aws_security_group" "alb_sg" {
     name_prefix = "alb-sg-"
@@ -141,14 +195,4 @@ resource "aws_route_table" "public_rt" {
     }
 
     tags = var.common_tags
-}
-
-resource "aws_route_table_association" "subnet_1_association" {
-    subnet_id      = aws_subnet.subnet_1.id
-    route_table_id = aws_route_table.public_rt.id
-}
-
-resource "aws_route_table_association" "subnet_2_association" {
-    subnet_id      = aws_subnet.subnet_2.id
-    route_table_id = aws_route_table.public_rt.id
 }

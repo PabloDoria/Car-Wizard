@@ -120,7 +120,9 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init
+        run: |
+          terraform init
+          terraform workspace select default || terraform workspace new default
 
       - name: Terraform Plan
         working-directory: terraform
@@ -128,7 +130,96 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve tfplan
+        run: |
+          # Verificar si los recursos ya existen
+          if aws iam get-role --role-name car-wizard-ecs-task-role 2>/dev/null; then
+            echo "El rol IAM ya existe, omitiendo creación..."
+          fi
+          
+          if aws secretsmanager describe-secret --secret-id car-wizard/db-credentials 2>/dev/null; then
+            echo "El secreto ya existe, omitiendo creación..."
+          fi
+          
+          terraform apply -auto-approve tfplan
+
+      - name: Verify Infrastructure
+        run: |
+          echo "🔍 Verificando recursos creados y conectividad..."
+          
+          # Verificar VPC
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
+          echo "✅ VPC creada: $VPC_ID"
+          
+          # Verificar Subnets
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[*].SubnetId" --output text)
+          echo "✅ Subnets creadas: $SUBNETS"
+          
+          # Verificar Security Groups
+          SGS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[*].GroupId" --output text)
+          echo "✅ Security Groups creados: $SGS"
+          
+          # Verificar RDS
+          RDS_ID=$(aws rds describe-db-instances --query "DBInstances[?DBInstanceIdentifier=='car-wizard-db'].DBInstanceIdentifier" --output text)
+          RDS_ENDPOINT=$(aws rds describe-db-instances --query "DBInstances[?DBInstanceIdentifier=='car-wizard-db'].Endpoint.Address" --output text)
+          echo "✅ RDS creado: $RDS_ID"
+          echo "🔌 Endpoint RDS: $RDS_ENDPOINT"
+          
+          # Verificar Lambda Functions
+          LAMBDAS=$(aws lambda list-functions --query "Functions[?starts_with(FunctionName, 'car-wizard-')].FunctionName" --output text)
+          echo "✅ Lambda Functions creadas: $LAMBDAS"
+          
+          # Verificar conectividad ECS -> RDS
+          echo "🔍 Verificando conectividad ECS -> RDS..."
+          ECS_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=ecs-tasks-sg-*" --query "SecurityGroups[0].GroupId" --output text)
+          RDS_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=rds-sg-*" --query "SecurityGroups[0].GroupId" --output text)
+          
+          # Verificar reglas de seguridad
+          aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$RDS_SG" --query "SecurityGroupRules[?FromPort==3306].GroupId" --output text | grep -q "$ECS_SG" && \
+            echo "✅ Regla de seguridad ECS -> RDS configurada correctamente" || \
+            echo "❌ Error: Falta regla de seguridad ECS -> RDS"
+          
+          # Verificar conectividad Lambda -> S3
+          echo "🔍 Verificando conectividad Lambda -> S3..."
+          aws s3 ls s3://car-wizard-data 2>/dev/null && \
+            echo "✅ Lambda puede acceder a S3" || \
+            echo "❌ Error: Lambda no puede acceder a S3"
+          
+          # Verificar conectividad ALB -> ECS
+          echo "🔍 Verificando conectividad ALB -> ECS..."
+          ALB_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=alb-sg-*" --query "SecurityGroups[0].GroupId" --output text)
+          aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$ECS_SG" --query "SecurityGroupRules[?FromPort==80].GroupId" --output text | grep -q "$ALB_SG" && \
+            echo "✅ Regla de seguridad ALB -> ECS configurada correctamente" || \
+            echo "❌ Error: Falta regla de seguridad ALB -> ECS"
+          
+          # Verificar conectividad ECS -> ECR
+          echo "🔍 Verificando conectividad ECS -> ECR..."
+          aws ecr describe-repositories --repository-names $ECR_REPOSITORY 2>/dev/null && \
+            echo "✅ ECS puede acceder a ECR" || \
+            echo "❌ Error: ECS no puede acceder a ECR"
+          
+          # Verificar conectividad Lambda -> RDS
+          echo "🔍 Verificando conectividad Lambda -> RDS..."
+          LAMBDA_SG=$(aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME --query 'Configuration.VpcConfig.SecurityGroupIds[0]' --output text)
+          aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$RDS_SG" --query "SecurityGroupRules[?FromPort==3306].GroupId" --output text | grep -q "$LAMBDA_SG" && \
+            echo "✅ Regla de seguridad Lambda -> RDS configurada correctamente" || \
+            echo "❌ Error: Falta regla de seguridad Lambda -> RDS"
+          
+          # Verificar endpoints de la aplicación
+          echo "🔍 Verificando endpoints de la aplicación..."
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].DNSName' --output text)
+          echo "🌐 ALB DNS: $ALB_DNS"
+          
+          # Verificar que el ALB esté configurado correctamente
+          ALB_LISTENERS=$(aws elbv2 describe-listeners --load-balancer-arn $(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text) --query 'Listeners[*].Port' --output text)
+          echo "🔊 Puertos del ALB: $ALB_LISTENERS"
+          
+          # Verificar que el target group esté configurado
+          TARGET_GROUP=$(aws elbv2 describe-target-groups --names car-wizard-tg --query 'TargetGroups[0].TargetGroupArn' --output text)
+          echo "🎯 Target Group: $TARGET_GROUP"
+          
+          # Verificar que haya targets registrados
+          TARGETS=$(aws elbv2 describe-target-health --target-group-arn $TARGET_GROUP --query 'TargetHealthDescriptions[*].Target.Id' --output text)
+          echo "🎯 Targets registrados: $TARGETS"
 
       - name: Get Resource Group Info
         if: success()
@@ -194,15 +285,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install Ansible
+      - name: Get VPC ID
         run: |
-          python -m pip install --upgrade pip
-          pip install ansible
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+          echo "Usando VPC existente: $VPC_ID"
 
       - name: Get RDS Endpoint
         run: |
@@ -223,6 +310,17 @@ jobs:
           DB_PASSWORD: ${{ secrets.RDS_PASSWORD }}
           APP_URL: http://${{ env.ALB_DNS }}
         run: |
+          # Crear archivo php.ini.j2 si no existe
+          mkdir -p ansible/roles/docker/templates
+          cat > ansible/roles/docker/templates/php.ini.j2 << 'EOL'
+          [PHP]
+          memory_limit = 256M
+          upload_max_filesize = 64M
+          post_max_size = 64M
+          max_execution_time = 300
+          max_input_time = 300
+          EOL
+          
           cd ansible
           ansible-playbook playbooks/configure-laravel.yml
 
@@ -308,6 +406,12 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get VPC ID
+        run: |
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+          echo "Usando VPC existente: $VPC_ID"
 
       - name: Test Lambda Function Manually
         run: |

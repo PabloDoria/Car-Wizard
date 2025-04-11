@@ -1,10 +1,7 @@
 resource "aws_db_subnet_group" "rds_subnet_group" {
-    name       = "car-wizard-db-subnet-group"
-    subnet_ids = [
-        aws_subnet.subnet_3.id,
-        aws_subnet.subnet_4.id
-    ]
-
+    name       = "car-wizard-rds-subnet-group"
+    subnet_ids = [aws_subnet.subnet_private_1.id, aws_subnet.subnet_private_2.id]
+    
     tags = var.common_tags
 }
 
@@ -39,15 +36,20 @@ resource "aws_db_instance" "rds" {
     storage_type        = "gp2"
     
     db_name             = "carwizarddb"
-    username            = "admin"
+    username            = var.rds_username
     password            = random_password.db_password.result
     
     vpc_security_group_ids = [aws_security_group.rds_sg.id]
     db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group.name
     
-    parameter_group_name   = aws_db_parameter_group.mysql_parameters.name
+    skip_final_snapshot    = true
+    publicly_accessible    = false
     
-    skip_final_snapshot = true
+    backup_retention_period = 7
+    backup_window          = "03:00-04:00"
+    maintenance_window     = "Mon:04:00-Mon:05:00"
+    
+    parameter_group_name   = aws_db_parameter_group.mysql_parameters.name
     
     tags = var.common_tags
 }

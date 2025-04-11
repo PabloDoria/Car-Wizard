@@ -103,7 +103,7 @@ resource "aws_ecs_service" "ecs_service" {
     deployment_minimum_healthy_percent = 100
 
     network_configuration {
-        subnets          = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
+        subnets          = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]  # Subnets públicas
         security_groups  = [aws_security_group.ecs_tasks_sg.id]
         assign_public_ip = true
     }

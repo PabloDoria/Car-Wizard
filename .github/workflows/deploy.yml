@@ -1,461 +1,119 @@
-name: Deploy Infrastructure & Laravel App
+name: Deploy Infrastructure
 
 on:
-  workflow_dispatch:  # Solo permite ejecución manual desde GitHub
-
-permissions:
-  id-token: write
-  contents: read
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: car-wizard
-  ECS_CLUSTER: car-wizard-cluster
-  ECS_SERVICE: car-wizard-service
-  ECS_TASK_DEFINITION: ecs/task-definition.json
-  LAMBDA_FUNCTION_NAME: LoadDataLambda
-  TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
+  TF_WORKSPACE: default
 
 jobs:
   terraform:
-    name: Deploy Infrastructure
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v2
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v1
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: hashicorp/setup-terraform@v1
         with:
-          python-version: '3.9'
-
-      - name: Prepare Lambda Files
-        run: |
-          # Crear directorio para Lambda y sus dependencias
-          mkdir -p terraform/lambda_package
-          
-          # Crear estructura de directorios para scripts
-          mkdir -p terraform/lambda_package/scripts
-          
-          # Copiar el script ObtencionDatos.py al directorio de scripts
-          echo "Copiando archivo ObtencionDatos.py..."
-          cp scripts/ObtencionDatos.py terraform/lambda_package/scripts/
-          
-          # Copiar el script de Lambda principal
-          echo "Copiando archivo Lambda principal..."
-          cp lambda/lambda_function.py terraform/lambda_package/
-          
-          # Instalar dependencias en el directorio del paquete
-          cd terraform/lambda_package
-          pip install pandas requests boto3 pymysql -t .
-          
-          # Verificar que los archivos estén en su lugar
-          echo "Verificando estructura de archivos..."
-          find . -type f | sort
-          
-          # Crear archivo ZIP para Lambda incluyendo todas las dependencias
-          echo "Creando archivo ZIP con dependencias incluidas..."
-          zip -r ../lambda_function.zip .
-          cd ../..
-          
-          # Crear archivo dummy para Terraform
-          echo "Creando archivo lambda_dummy.zip para Terraform..."
-          mkdir -p terraform/tmp_lambda
-          echo 'def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "Hello from Lambda!"}
-          ' > terraform/tmp_lambda/lambda_function.py
-          cd terraform/tmp_lambda
-          zip -j ../lambda_dummy.zip lambda_function.py
-          cd ../..
-          
-          # Limpiar archivos temporales
-          echo "Limpiando archivos temporales..."
-          rm -rf terraform/lambda_package
-          rm -rf terraform/tmp_lambda
-          
-          echo "✅ Archivos Lambda preparados correctamente:"
-          ls -la terraform/lambda_function.zip
-          ls -la terraform/lambda_dummy.zip
-
-      - name: Create S3 Bucket for Lambda Data
-        run: |
-          # Verificar si el bucket ya existe
-          echo "Verificando si el bucket de datos ya existe..."
-          aws s3api head-bucket --bucket car-wizard-data 2>/dev/null || \
-          aws s3api create-bucket --bucket car-wizard-data --region ${AWS_REGION} || true
-          
-          echo "Verificando si el bucket de código ya existe..."
-          aws s3api head-bucket --bucket car-wizard-code 2>/dev/null || \
-          aws s3api create-bucket --bucket car-wizard-code --region ${AWS_REGION} || true
-          
-          echo "Subiendo script ObtencionDatos.py al bucket de código..."
-          aws s3 cp scripts/ObtencionDatos.py s3://car-wizard-code/scripts/ObtencionDatos.py
-          
-          echo "Configurando políticas de los buckets..."
-          aws s3api put-bucket-lifecycle-configuration --bucket car-wizard-data \
-            --lifecycle-configuration '{
-              "Rules": [
-                {
-                  "ID": "DeleteOldData",
-                  "Status": "Enabled",
-                  "Prefix": "data/",
-                  "Expiration": {
-                    "Days": 30
-                  }
-                }
-              ]
-            }'
-          
-          echo "✅ Buckets S3 configurados correctamente"
+          terraform_version: "1.0.0"
 
       - name: Terraform Init
-        working-directory: terraform
+        run: terraform init
+
+      - name: Select Default Workspace
         run: |
-          terraform init
           terraform workspace select default || terraform workspace new default
 
       - name: Terraform Plan
-        working-directory: terraform
         run: terraform plan -out=tfplan
 
       - name: Terraform Apply
-        working-directory: terraform
         run: |
-          # Verificar si los recursos ya existen
-          if aws iam get-role --role-name car-wizard-ecs-task-role 2>/dev/null; then
-            echo "El rol IAM ya existe, omitiendo creación..."
-          fi
-          
-          if aws secretsmanager describe-secret --secret-id car-wizard/db-credentials 2>/dev/null; then
-            echo "El secreto ya existe, omitiendo creación..."
-          fi
-          
-          terraform apply -auto-approve tfplan
-
-      - name: Verify Infrastructure
-        run: |
-          echo "🔍 Verificando recursos creados y conectividad..."
-          
-          # Verificar VPC
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
-          echo "✅ VPC creada: $VPC_ID"
-          
-          # Verificar Subnets
-          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[*].SubnetId" --output text)
-          echo "✅ Subnets creadas: $SUBNETS"
-          
-          # Verificar Security Groups
-          SGS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[*].GroupId" --output text)
-          echo "✅ Security Groups creados: $SGS"
-          
-          # Verificar RDS
-          RDS_ID=$(aws rds describe-db-instances --query "DBInstances[?DBInstanceIdentifier=='car-wizard-db'].DBInstanceIdentifier" --output text)
-          RDS_ENDPOINT=$(aws rds describe-db-instances --query "DBInstances[?DBInstanceIdentifier=='car-wizard-db'].Endpoint.Address" --output text)
-          echo "✅ RDS creado: $RDS_ID"
-          echo "🔌 Endpoint RDS: $RDS_ENDPOINT"
-          
-          # Verificar Lambda Functions
-          LAMBDAS=$(aws lambda list-functions --query "Functions[?starts_with(FunctionName, 'car-wizard-')].FunctionName" --output text)
-          echo "✅ Lambda Functions creadas: $LAMBDAS"
-          
-          # Verificar conectividad ECS -> RDS
-          echo "🔍 Verificando conectividad ECS -> RDS..."
-          ECS_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=ecs-tasks-sg-*" --query "SecurityGroups[0].GroupId" --output text)
-          RDS_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=rds-sg-*" --query "SecurityGroups[0].GroupId" --output text)
-          
-          # Verificar reglas de seguridad
-          aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$RDS_SG" --query "SecurityGroupRules[?FromPort==3306].GroupId" --output text | grep -q "$ECS_SG" && \
-            echo "✅ Regla de seguridad ECS -> RDS configurada correctamente" || \
-            echo "❌ Error: Falta regla de seguridad ECS -> RDS"
-          
-          # Verificar conectividad Lambda -> S3
-          echo "🔍 Verificando conectividad Lambda -> S3..."
-          aws s3 ls s3://car-wizard-data 2>/dev/null && \
-            echo "✅ Lambda puede acceder a S3" || \
-            echo "❌ Error: Lambda no puede acceder a S3"
-          
-          # Verificar conectividad ALB -> ECS
-          echo "🔍 Verificando conectividad ALB -> ECS..."
-          ALB_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=alb-sg-*" --query "SecurityGroups[0].GroupId" --output text)
-          aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$ECS_SG" --query "SecurityGroupRules[?FromPort==80].GroupId" --output text | grep -q "$ALB_SG" && \
-            echo "✅ Regla de seguridad ALB -> ECS configurada correctamente" || \
-            echo "❌ Error: Falta regla de seguridad ALB -> ECS"
-          
-          # Verificar conectividad ECS -> ECR
-          echo "🔍 Verificando conectividad ECS -> ECR..."
-          aws ecr describe-repositories --repository-names $ECR_REPOSITORY 2>/dev/null && \
-            echo "✅ ECS puede acceder a ECR" || \
-            echo "❌ Error: ECS no puede acceder a ECR"
-          
-          # Verificar conectividad Lambda -> RDS
-          echo "🔍 Verificando conectividad Lambda -> RDS..."
-          LAMBDA_SG=$(aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME --query 'Configuration.VpcConfig.SecurityGroupIds[0]' --output text)
-          aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$RDS_SG" --query "SecurityGroupRules[?FromPort==3306].GroupId" --output text | grep -q "$LAMBDA_SG" && \
-            echo "✅ Regla de seguridad Lambda -> RDS configurada correctamente" || \
-            echo "❌ Error: Falta regla de seguridad Lambda -> RDS"
-          
-          # Verificar endpoints de la aplicación
-          echo "🔍 Verificando endpoints de la aplicación..."
-          ALB_DNS=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].DNSName' --output text)
-          echo "🌐 ALB DNS: $ALB_DNS"
-          
-          # Verificar que el ALB esté configurado correctamente
-          ALB_LISTENERS=$(aws elbv2 describe-listeners --load-balancer-arn $(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text) --query 'Listeners[*].Port' --output text)
-          echo "🔊 Puertos del ALB: $ALB_LISTENERS"
-          
-          # Verificar que el target group esté configurado
-          TARGET_GROUP=$(aws elbv2 describe-target-groups --names car-wizard-tg --query 'TargetGroups[0].TargetGroupArn' --output text)
-          echo "🎯 Target Group: $TARGET_GROUP"
-          
-          # Verificar que haya targets registrados
-          TARGETS=$(aws elbv2 describe-target-health --target-group-arn $TARGET_GROUP --query 'TargetHealthDescriptions[*].Target.Id' --output text)
-          echo "🎯 Targets registrados: $TARGETS"
-
-      - name: Get Resource Group Info
-        if: success()
-        run: |
-          echo "🔍 Verificando Resource Group..."
-          RESOURCE_GROUP=$(aws resource-groups list-groups --query "GroupIdentifiers[?Name=='car-wizard-resources'].GroupArn" --output text)
-          if [ ! -z "$RESOURCE_GROUP" ] && [ "$RESOURCE_GROUP" != "None" ]; then
-            echo "✅ Resource Group creado correctamente: $RESOURCE_GROUP"
-            echo "Para acceder a todos los recursos agrupados, visite:"
-            echo "https://console.aws.amazon.com/resource-groups/group/car-wizard-resources"
-          else
-            echo "⚠️ Resource Group no detectado, verificando recursos individuales..."
-            aws cloudwatch list-dashboards
-          fi
-
-      - name: Get IAM User Credentials
-        if: success()
-        run: |
-          echo "🔐 Credenciales de acceso para los usuarios:"
-          echo "----------------------------------------"
-          for USER in "anad" "angelg" "luism"; do
-            echo "Usuario: car-wizard-$USER"
-            # Crear nuevo perfil de login y obtener la contraseña
-            PASSWORD=$(aws iam create-login-profile --user-name "car-wizard-$USER" --password-reset-required --generate-cli-skeleton output | jq -r '.Password')
-            echo "Contraseña temporal: $PASSWORD"
-            echo "URL de acceso: https://console.aws.amazon.com"
-            echo "----------------------------------------"
-          done
-        continue-on-error: true
-
-      - name: Save Credentials to Job Summary
-        if: success()
-        run: |
-          echo "### 🔐 Credenciales de acceso AWS" >> $GITHUB_STEP_SUMMARY
-          echo "Los usuarios pueden acceder a la consola de AWS en: https://console.aws.amazon.com" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Usuario | Contraseña |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|------------|" >> $GITHUB_STEP_SUMMARY
-          for USER in "anad" "angelg" "luism"; do
-            PASSWORD=$(aws iam get-login-profile --user-name "car-wizard-$USER" --query 'LoginProfile.CreateDate' --output text 2>/dev/null || echo "Contraseña pendiente de generar")
-            echo "| car-wizard-$USER | $PASSWORD |" >> $GITHUB_STEP_SUMMARY
-          done
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "⚠️ **Importante**: Los usuarios deberán cambiar su contraseña en el primer inicio de sesión" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 📊 Dashboard y Recursos" >> $GITHUB_STEP_SUMMARY
-          echo "Para ver todos los recursos agrupados, visite:" >> $GITHUB_STEP_SUMMARY
-          echo "- [Resource Group en AWS Console](https://console.aws.amazon.com/resource-groups/group/car-wizard-resources)" >> $GITHUB_STEP_SUMMARY
-          echo "- [CloudWatch Dashboard](https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=car-wizard-dashboard)" >> $GITHUB_STEP_SUMMARY
+          # Aplicar solo los recursos que no existen
+          terraform apply -auto-approve -target=aws_vpc.vpc
+          terraform apply -auto-approve -target=aws_subnet.subnet_1 -target=aws_subnet.subnet_2
+          terraform apply -auto-approve -target=aws_security_group.alb_sg -target=aws_security_group.ecs_tasks_sg
+          terraform apply -auto-approve -target=aws_ecs_cluster.ecs_cluster
+          terraform apply -auto-approve -target=aws_ecr_repository.ecr_repo
+          terraform apply -auto-approve -target=aws_lb_target_group.alb_target
+          terraform apply -auto-approve -target=aws_db_parameter_group.mysql_parameters
+          terraform apply -auto-approve -target=aws_cloudwatch_log_group.lambda_logs
+          terraform apply -auto-approve -target=aws_cloudwatch_event_rule.daily_lambda_trigger
 
   deploy:
-    name: Deploy Laravel to ECS
     needs: terraform
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v2
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v1
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Get VPC ID
         run: |
           VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
           echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
-          echo "Usando VPC existente: $VPC_ID"
 
       - name: Get RDS Endpoint
         run: |
-          DB_HOST=$(aws rds describe-db-instances --db-instance-identifier car-wizard-db --query 'DBInstances[0].Endpoint.Address' --output text)
-          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
-          echo "Base de datos disponible en: $DB_HOST"
+          RDS_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier car-wizard-db --query "DBInstances[0].Endpoint.Address" --output text)
+          echo "RDS_ENDPOINT=$RDS_ENDPOINT" >> $GITHUB_ENV
 
-      - name: Get ALB DNS Name
+      - name: Get ALB DNS
         run: |
-          ALB_DNS=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].DNSName' --output text)
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query "LoadBalancers[0].DNSName" --output text)
           echo "ALB_DNS=$ALB_DNS" >> $GITHUB_ENV
-          echo "Load Balancer disponible en: $ALB_DNS"
 
       - name: Configure Laravel with Ansible
-        env:
-          DB_NAME: carwizarddb
-          DB_USER: admin
-          DB_PASSWORD: ${{ secrets.RDS_PASSWORD }}
-          APP_URL: http://${{ env.ALB_DNS }}
         run: |
-          # Crear archivo php.ini.j2 si no existe
-          mkdir -p ansible/roles/docker/templates
-          cat > ansible/roles/docker/templates/php.ini.j2 << 'EOL'
-          [PHP]
-          memory_limit = 256M
-          upload_max_filesize = 64M
-          post_max_size = 64M
-          max_execution_time = 300
-          max_input_time = 300
-          EOL
-          
           cd ansible
-          ansible-playbook playbooks/configure-laravel.yml
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Get AWS Account ID
-        run: echo "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
-
-      - name: Build and push Docker image
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          echo "ECR_REGISTRY=$ECR_REGISTRY" >> $GITHUB_ENV
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-          
-          echo "Construyendo imagen de Docker: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
-          echo "Subiendo imagen a ECR..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "✅ Imagen subida exitosamente"
-
-      - name: Update ECS Task Definition
-        run: |
-          echo "Actualizando task-definition.json con la imagen: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          sed -i 's|<IMAGE>|'"$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"'|g' $ECS_TASK_DEFINITION
-          cat $ECS_TASK_DEFINITION
-
-      - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          cluster: ${{ env.ECS_CLUSTER }}
-          service: ${{ env.ECS_SERVICE }}
-          task-definition: ${{ env.ECS_TASK_DEFINITION }}
-          wait-for-service-stability: true
-
-      - name: Verify Deployment
-        if: success()
-        run: |
-          # Verificar el estado del servicio ECS
-          echo "Verificando estado del servicio ECS..."
-          SERVICE_STATUS=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].status' --output text)
-          RUNNING_COUNT=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].runningCount' --output text)
-          DESIRED_COUNT=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].desiredCount' --output text)
-          
-          echo "Estado del servicio: $SERVICE_STATUS"
-          echo "Tareas en ejecución: $RUNNING_COUNT de $DESIRED_COUNT deseadas"
-          
-          if [ "$SERVICE_STATUS" = "ACTIVE" ] && [ "$RUNNING_COUNT" -eq "$DESIRED_COUNT" ]; then
-            echo "✅ Servicio ECS desplegado correctamente"
-          else
-            echo "⚠️ El servicio puede estar en proceso de estabilización, verificar manualmente"
+          # Crear php.ini.j2 si no existe
+          if [ ! -f roles/docker/templates/php.ini.j2 ]; then
+            mkdir -p roles/docker/templates
+            cat > roles/docker/templates/php.ini.j2 << EOL
+            [PHP]
+            memory_limit = 256M
+            upload_max_filesize = 64M
+            post_max_size = 64M
+            max_execution_time = 300
+            EOL
           fi
-          
-          # Obtener la URL completa de la aplicación
-          ALB_DNS=$(aws elbv2 describe-load-balancers --names car-wizard-alb --query 'LoadBalancers[0].DNSName' --output text)
-          APP_URL="http://$ALB_DNS"
-          
-          echo "### 🌐 Acceso a la Aplicación" >> $GITHUB_STEP_SUMMARY
-          echo "La aplicación está disponible en: $APP_URL" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Despliegue completado exitosamente"
-          
-          # Mostrar recursos desplegados
-          echo "### 📋 Resumen de Recursos" >> $GITHUB_STEP_SUMMARY
-          echo "| Recurso | Nombre/ID | Estado |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ECS Cluster | $ECS_CLUSTER | ACTIVO |" >> $GITHUB_STEP_SUMMARY
-          echo "| ECS Service | $ECS_SERVICE | $SERVICE_STATUS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Lambda | $LAMBDA_FUNCTION_NAME | DISPONIBLE |" >> $GITHUB_STEP_SUMMARY
-          echo "| ALB | car-wizard-alb | ACTIVO |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS | car-wizard-db | DISPONIBLE |" >> $GITHUB_STEP_SUMMARY
-          echo "| ECR | $ECR_REPOSITORY | DISPONIBLE |" >> $GITHUB_STEP_SUMMARY
+          ansible-playbook -i localhost, playbooks/laravel.yml
 
   verify-lambda:
-    name: Verify Lambda Function
-    needs: terraform
+    needs: deploy
     runs-on: ubuntu-latest
-
     steps:
+      - uses: actions/checkout@v2
+
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v1
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Get VPC ID
         run: |
           VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
           echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
-          echo "Usando VPC existente: $VPC_ID"
 
-      - name: Test Lambda Function Manually
+      - name: Verify Lambda Function
         run: |
-          echo "Invocando función Lambda manualmente para verificar funcionamiento..."
-          aws lambda invoke \
-            --function-name $LAMBDA_FUNCTION_NAME \
-            --invocation-type RequestResponse \
-            --payload '{"action": "manual_test"}' \
-            --log-type Tail \
-            --query 'LogResult' \
-            --output text lambda_output.txt | base64 --decode
-          
-          echo "Mostrando los últimos 50 registros de log de CloudWatch para Lambda..."
-          aws logs get-log-events \
-            --log-group-name "/aws/lambda/$LAMBDA_FUNCTION_NAME" \
-            --log-stream-name $(aws logs describe-log-streams \
-              --log-group-name "/aws/lambda/$LAMBDA_FUNCTION_NAME" \
-              --order-by LastEventTime \
-              --descending \
-              --limit 1 \
-              --query 'logStreams[0].logStreamName' \
-              --output text) \
-            --limit 50 \
-            --query 'events[*].message' \
-            --output text
-          
-          echo "### 🚀 Resumen del Lambda" >> $GITHUB_STEP_SUMMARY
-          echo "Función Lambda \`$LAMBDA_FUNCTION_NAME\` invocada exitosamente." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Para ver los logs en tiempo real:" >> $GITHUB_STEP_SUMMARY
-          echo "[CloudWatch Logs](https://console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#logsV2:log-groups/log-group/$2Faws$2Flambda$2F${LAMBDA_FUNCTION_NAME})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Para ejecutar manualmente la función:" >> $GITHUB_STEP_SUMMARY
-          echo "[Lambda Console](https://console.aws.amazon.com/lambda/home?region=${AWS_REGION}#/functions/${LAMBDA_FUNCTION_NAME}?tab=testing)" >> $GITHUB_STEP_SUMMARY
-
-  notify:
-    name: Notify on Failure
-    needs: [terraform, deploy, verify-lambda]
-    if: failure()
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Send failure notification
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          curl -X POST -H 'Content-type: application/json' --data '{"text":"🚨 *Deploy Failed!*"}' $SLACK_WEBHOOK_URL
+          aws lambda get-function --function-name LoadDataLambda
+          aws lambda invoke --function-name LoadDataLambda response.json
+          cat response.json

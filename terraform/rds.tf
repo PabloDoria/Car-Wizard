@@ -52,26 +52,14 @@ resource "aws_db_instance" "rds" {
     tags = var.common_tags
 }
 
-# Script de inicialización de la base de datos
-resource "null_resource" "db_init" {
-    depends_on = [aws_db_instance.rds]
-
-    triggers = {
-        instance_id = aws_db_instance.rds.id
-        schema_hash = filesha256("${path.module}/../scripts/database/schema.sql")
-    }
-
-    provisioner "local-exec" {
-        command = <<-EOT
-            mysql -h ${aws_db_instance.rds.endpoint} \
-                   -u ${aws_db_instance.rds.username} \
-                   -p${random_password.db_password.result} \
-                   < ${path.module}/../scripts/database/schema.sql
-        EOT
-    }
-}
-
 output "rds_endpoint" {
     value = aws_db_instance.rds.endpoint
+    description = "Endpoint de la base de datos RDS"
+}
+
+output "rds_username" {
+    value = aws_db_instance.rds.username
+    description = "Usuario de la base de datos RDS"
+    sensitive = true
 }
 

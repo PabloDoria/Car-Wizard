@@ -65,7 +65,10 @@ resource "aws_lambda_function" "schema_generator" {
 
   environment {
     variables = {
-      DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
+      RDS_ENDPOINT = aws_db_instance.rds.endpoint
+      RDS_USERNAME = aws_db_instance.rds.username
+      RDS_PASSWORD = random_password.db_password.result
+      RDS_DATABASE = "carwizarddb"
     }
   }
 
@@ -73,6 +76,8 @@ resource "aws_lambda_function" "schema_generator" {
     subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
     security_group_ids = [aws_security_group.lambda_sg.id]
   }
+
+  depends_on = [aws_db_instance.rds]
 }
 
 # Función Lambda para inicializar la base de datos
@@ -87,7 +92,10 @@ resource "aws_lambda_function" "db_initializer" {
 
   environment {
     variables = {
-      DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
+      RDS_ENDPOINT = aws_db_instance.rds.endpoint
+      RDS_USERNAME = aws_db_instance.rds.username
+      RDS_PASSWORD = random_password.db_password.result
+      RDS_DATABASE = "carwizarddb"
     }
   }
 
@@ -95,6 +103,8 @@ resource "aws_lambda_function" "db_initializer" {
     subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
     security_group_ids = [aws_security_group.lambda_sg.id]
   }
+
+  depends_on = [aws_lambda_function.schema_generator]
 }
 
 # Función Lambda para cargar datos
@@ -109,7 +119,10 @@ resource "aws_lambda_function" "data_loader" {
 
   environment {
     variables = {
-      DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
+      RDS_ENDPOINT = aws_db_instance.rds.endpoint
+      RDS_USERNAME = aws_db_instance.rds.username
+      RDS_PASSWORD = random_password.db_password.result
+      RDS_DATABASE = "carwizarddb"
     }
   }
 
@@ -117,6 +130,8 @@ resource "aws_lambda_function" "data_loader" {
     subnet_ids         = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
     security_group_ids = [aws_security_group.lambda_sg.id]
   }
+
+  depends_on = [aws_lambda_function.db_initializer]
 }
 
 # Regla de EventBridge para ejecutar el generador de schema

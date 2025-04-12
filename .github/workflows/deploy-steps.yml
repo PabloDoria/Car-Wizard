@@ -30,10 +30,125 @@ env:
   TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
 
 jobs:
+  cleanup:
+    name: Cleanup Existing Resources
+    runs-on: ubuntu-latest
+    if: github.event.inputs.step == 'all'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Force Delete IAM Roles
+        run: |
+          echo "Eliminando roles IAM existentes..."
+          # Eliminar el rol de ECS task
+          aws iam delete-role --role-name car-wizard-ecs-task-role || true
+          # Eliminar el rol de Lambda
+          aws iam delete-role --role-name LambdaExecutionRole || true
+          # Eliminar el rol de ECS execution
+          aws iam delete-role --role-name ecsTaskExecutionRole || true
+          sleep 10
+
+      - name: Force Delete Secrets
+        run: |
+          echo "Eliminando secretos existentes..."
+          # Eliminar el secreto de credenciales de la base de datos
+          aws secretsmanager delete-secret --secret-id car-wizard/db-credentials --force-delete-without-recovery || true
+          sleep 10
+
+      - name: Force Delete RDS Resources
+        run: |
+          echo "Eliminando recursos de RDS..."
+          # Eliminar instancia RDS
+          aws rds delete-db-instance --db-instance-identifier car-wizard-db --skip-final-snapshot --delete-automated-backups || true
+          # Eliminar subnet groups
+          aws rds delete-db-subnet-group --db-subnet-group-name car-wizard-rds-subnet-group || true
+          # Eliminar parameter groups
+          aws rds delete-db-parameter-group --db-parameter-group-name $(aws rds describe-db-parameter-groups --query 'DBParameterGroups[?starts_with(DBParameterGroupName, `car-wizard-params-`)].DBParameterGroupName' --output text) || true
+          sleep 30
+
+      - name: Force Delete Lambda Resources
+        run: |
+          echo "Eliminando recursos de Lambda..."
+          # Eliminar funciones Lambda
+          aws lambda delete-function --function-name car-wizard-schema-generator || true
+          aws lambda delete-function --function-name car-wizard-db-initializer || true
+          aws lambda delete-function --function-name car-wizard-data-loader || true
+          # Eliminar reglas de EventBridge
+          aws events remove-targets --rule car-wizard-schema-generator --ids SchemaGenerator || true
+          aws events delete-rule --name car-wizard-schema-generator || true
+          aws events remove-targets --rule car-wizard-db-initializer --ids DBInitializer || true
+          aws events delete-rule --name car-wizard-db-initializer || true
+          aws events remove-targets --rule car-wizard-data-loader --ids DataLoader || true
+          aws events delete-rule --name car-wizard-data-loader || true
+          sleep 10
+
+      - name: Force Delete ECS Resources
+        run: |
+          echo "Eliminando recursos de ECS..."
+          # Detener y eliminar el servicio
+          aws ecs update-service --cluster car-wizard-cluster --service car-wizard-service --desired-count 0 || true
+          aws ecs delete-service --cluster car-wizard-cluster --service car-wizard-service || true
+          # Eliminar el cluster
+          aws ecs delete-cluster --cluster car-wizard-cluster || true
+          sleep 30
+
+      - name: Force Delete Network Resources
+        run: |
+          echo "Eliminando recursos de red..."
+          # Obtener VPC ID
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query 'Vpcs[0].VpcId' --output text)
+          
+          if [ ! -z "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            echo "Eliminando recursos asociados a VPC $VPC_ID..."
+            
+            # Eliminar Security Groups
+            for sg in $(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text); do
+              aws ec2 delete-security-group --group-id $sg || true
+            done
+            
+            # Eliminar Subnets
+            for subnet in $(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text); do
+              aws ec2 delete-subnet --subnet-id $subnet || true
+            done
+            
+            # Eliminar Internet Gateway
+            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[*].InternetGatewayId' --output text)
+            if [ ! -z "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
+              aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
+              aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
+            fi
+            
+            # Eliminar VPC
+            aws ec2 delete-vpc --vpc-id $VPC_ID || true
+          fi
+          sleep 30
+
+      - name: Destroy Existing Resources with Terraform
+        working-directory: terraform
+        run: |
+          echo "Destruyendo recursos restantes con Terraform..."
+          terraform destroy -auto-approve || true
+
   deploy-networking:
     name: Deploy Networking Infrastructure
     runs-on: ubuntu-latest
     if: github.event.inputs.step == 'networking' || github.event.inputs.step == 'all'
+    needs: cleanup
     
     steps:
       - name: Checkout repository
@@ -64,6 +179,7 @@ jobs:
                         -target=aws_security_group.alb_sg \
                         -target=aws_security_group.rds_sg \
                         -target=aws_security_group.ecs_tasks_sg \
+                        -target=aws_security_group.lambda_sg \
                         -out=tfplan
 
       - name: Terraform Apply (Networking)
@@ -85,7 +201,8 @@ jobs:
             -target=aws_internet_gateway.igw \
             -target=aws_security_group.alb_sg \
             -target=aws_security_group.rds_sg \
-            -target=aws_security_group.ecs_tasks_sg
+            -target=aws_security_group.ecs_tasks_sg \
+            -target=aws_security_group.lambda_sg
           exit 1
 
   deploy-database:

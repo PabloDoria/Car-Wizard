@@ -683,6 +683,25 @@ jobs:
           echo "Listando todos los Resource Groups restantes..."
           aws resource-groups list-groups
 
+      - name: Force Delete Specific Resources
+        run: |
+          echo "Eliminando recursos específicos..."
+          
+          # Eliminar el rol de ECS Task
+          echo "Eliminando rol ECS Task..."
+          aws iam delete-role-policy --role-name car-wizard-ecs-task-role --policy-name task-policy || true
+          aws iam delete-role --role-name car-wizard-ecs-task-role || true
+          
+          # Eliminar el secreto de credenciales de DB
+          echo "Eliminando secreto de credenciales..."
+          aws secretsmanager delete-secret \
+            --secret-id car-wizard/db-credentials \
+            --force-delete-without-recovery || true
+          
+          # Esperar un momento para que los cambios se propaguen
+          echo "Esperando 30 segundos para que los cambios se propaguen..."
+          sleep 30
+
       - name: Terraform Destroy
         working-directory: terraform
         run: |

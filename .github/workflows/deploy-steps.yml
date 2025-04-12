@@ -110,32 +110,55 @@ jobs:
       - name: Force Delete Network Resources
         run: |
           echo "Eliminando recursos de red..."
-          # Obtener VPC ID
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query 'Vpcs[0].VpcId' --output text)
+          # Obtener todas las VPCs con el tag Name=Car-Wizard-VPC
+          VPC_IDS=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query 'Vpcs[*].VpcId' --output text)
           
-          if [ ! -z "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-            echo "Eliminando recursos asociados a VPC $VPC_ID..."
+          for VPC_ID in $VPC_IDS; do
+            echo "Procesando VPC: $VPC_ID"
             
-            # Eliminar Security Groups
+            # 1. Eliminar NAT Gateways
+            for nat in $(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" --query 'NatGateways[*].NatGatewayId' --output text); do
+              echo "Eliminando NAT Gateway: $nat"
+              aws ec2 delete-nat-gateway --nat-gateway-id $nat
+            done
+            
+            # 2. Esperar a que los NAT Gateways se eliminen
+            echo "Esperando a que los NAT Gateways se eliminen..."
+            aws ec2 wait nat-gateway-available --filter "Name=vpc-id,Values=$VPC_ID"
+            
+            # 3. Eliminar Security Groups
             for sg in $(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text); do
+              echo "Eliminando Security Group: $sg"
               aws ec2 delete-security-group --group-id $sg || true
             done
             
-            # Eliminar Subnets
+            # 4. Eliminar Subnets
             for subnet in $(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text); do
+              echo "Eliminando Subnet: $subnet"
               aws ec2 delete-subnet --subnet-id $subnet || true
             done
             
-            # Eliminar Internet Gateway
+            # 5. Eliminar Internet Gateway
             IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[*].InternetGatewayId' --output text)
             if [ ! -z "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
+              echo "Eliminando Internet Gateway: $IGW_ID"
               aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
               aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
             fi
             
-            # Eliminar VPC
+            # 6. Eliminar Route Tables (excepto la principal)
+            for rt in $(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text); do
+              echo "Eliminando Route Table: $rt"
+              aws ec2 delete-route-table --route-table-id $rt || true
+            done
+            
+            # 7. Eliminar VPC
+            echo "Eliminando VPC: $VPC_ID"
             aws ec2 delete-vpc --vpc-id $VPC_ID || true
-          fi
+          done
+          
+          # 8. Esperar a que todas las VPCs se eliminen
+          echo "Esperando a que todas las VPCs se eliminen..."
           sleep 30
 
       - name: Destroy Existing Resources with Terraform
@@ -166,6 +189,14 @@ jobs:
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
+
+      - name: Check Existing VPC
+        run: |
+          VPC_EXISTS=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query 'length(Vpcs)' --output text)
+          if [ "$VPC_EXISTS" -gt "0" ]; then
+            echo "Error: Ya existe una VPC con el nombre Car-Wizard-VPC. Por favor, elimina los recursos existentes primero."
+            exit 1
+          fi
 
       - name: Terraform Plan (Networking)
         working-directory: terraform

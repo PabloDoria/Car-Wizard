@@ -44,35 +44,59 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      - name: Check and Cleanup Existing Resources
+      - name: Cleanup Existing VPCs
         run: |
-          # Verificar y limpiar VPCs duplicadas
+          # Obtener todas las VPCs con el tag Name=Car-Wizard-VPC
           VPC_IDS=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query "Vpcs[*].VpcId" --output text)
-          for vpc_id in $VPC_IDS; do
-            if [ "$vpc_id" != "" ]; then
-              echo "Eliminando VPC duplicada: $vpc_id"
-              aws ec2 delete-vpc --vpc-id $vpc_id
-            fi
-          done
           
-          # Verificar y limpiar subnets duplicadas
-          SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=tag:Project,Values=car-wizard" --query "Subnets[*].SubnetId" --output text)
-          for subnet_id in $SUBNET_IDS; do
-            if [ "$subnet_id" != "" ]; then
-              echo "Eliminando subnet duplicada: $subnet_id"
-              aws ec2 delete-subnet --subnet-id $subnet_id
-            fi
-          done
+          if [ -n "$VPC_IDS" ]; then
+            echo "Encontradas VPCs existentes: $VPC_IDS"
+            
+            # Eliminar todas las VPCs existentes
+            for vpc_id in $VPC_IDS; do
+              echo "Eliminando VPC: $vpc_id"
+              
+              # Obtener y eliminar subnets
+              SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query "Subnets[*].SubnetId" --output text)
+              for subnet_id in $SUBNET_IDS; do
+                echo "Eliminando subnet: $subnet_id"
+                aws ec2 delete-subnet --subnet-id $subnet_id
+              done
+              
+              # Obtener y eliminar security groups
+              SG_IDS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text)
+              for sg_id in $SG_IDS; do
+                echo "Eliminando security group: $sg_id"
+                aws ec2 delete-security-group --group-id $sg_id
+              done
+              
+              # Obtener y eliminar NAT Gateways
+              NAT_IDS=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc_id" --query "NatGateways[*].NatGatewayId" --output text)
+              for nat_id in $NAT_IDS; do
+                echo "Eliminando NAT Gateway: $nat_id"
+                aws ec2 delete-nat-gateway --nat-gateway-id $nat_id
+              done
+              
+              # Obtener y eliminar Internet Gateways
+              IGW_IDS=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query "InternetGateways[*].InternetGatewayId" --output text)
+              for igw_id in $IGW_IDS; do
+                echo "Eliminando Internet Gateway: $igw_id"
+                aws ec2 detach-internet-gateway --internet-gateway-id $igw_id --vpc-id $vpc_id
+                aws ec2 delete-internet-gateway --internet-gateway-id $igw_id
+              done
+              
+              # Eliminar la VPC
+              aws ec2 delete-vpc --vpc-id $vpc_id
+            done
+          else
+            echo "No se encontraron VPCs existentes"
+          fi
 
       - name: Terraform Plan
-        run: |
-          # Crear plan completo
-          terraform plan -out=tfplan
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
-        run: |
-          # Aplicar el plan
-          terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve tfplan
 
       - name: Verify Resources
         run: |

@@ -48,11 +48,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      - name: Terraform Init (Networking)
+      - name: Terraform Init
         working-directory: terraform
-        run: |
-          terraform init
-          terraform workspace select networking || terraform workspace new networking
+        run: terraform init
 
       - name: Terraform Plan (Networking)
         working-directory: terraform
@@ -60,10 +58,8 @@ jobs:
           terraform plan -target=aws_vpc.vpc \
                         -target=aws_subnet.subnet_1 \
                         -target=aws_subnet.subnet_2 \
-                        -target=aws_subnet.subnet_3 \
-                        -target=aws_subnet.subnet_4 \
-                        -target=aws_subnet.subnet_5 \
-                        -target=aws_subnet.subnet_6 \
+                        -target=aws_subnet.subnet_private_1 \
+                        -target=aws_subnet.subnet_private_2 \
                         -target=aws_internet_gateway.igw \
                         -target=aws_security_group.alb_sg \
                         -target=aws_security_group.rds_sg \
@@ -84,10 +80,8 @@ jobs:
             -target=aws_vpc.vpc \
             -target=aws_subnet.subnet_1 \
             -target=aws_subnet.subnet_2 \
-            -target=aws_subnet.subnet_3 \
-            -target=aws_subnet.subnet_4 \
-            -target=aws_subnet.subnet_5 \
-            -target=aws_subnet.subnet_6 \
+            -target=aws_subnet.subnet_private_1 \
+            -target=aws_subnet.subnet_private_2 \
             -target=aws_internet_gateway.igw \
             -target=aws_security_group.alb_sg \
             -target=aws_security_group.rds_sg \
@@ -113,11 +107,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      - name: Terraform Init (Database)
+      - name: Terraform Init
         working-directory: terraform
-        run: |
-          terraform init
-          terraform workspace select database || terraform workspace new database
+        run: terraform init
 
       - name: Terraform Plan (Database)
         working-directory: terraform
@@ -162,69 +154,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      - name: Prepare Lambda Files
-        run: |
-          mkdir -p terraform/lambda_package
-          mkdir -p terraform/lambda_package/scripts
-          mkdir -p terraform/lambda_package/database
-          mkdir -p terraform/lambda_package/endpointsML
-          mkdir -p terraform/lambda_package/endpointsCarAPI
-          
-          # Verificar y copiar archivos principales
-          if [ -f "scripts/main.py" ]; then
-            cp scripts/main.py terraform/lambda_package/
-            echo "✅ Archivo main.py copiado correctamente"
-          else
-            echo "❌ Error: No se encontró el archivo main.py"
-            exit 1
-          fi
-          
-          if [ -f "scripts/database/schema_lambda.py" ]; then
-            cp scripts/database/schema_lambda.py terraform/lambda_package/
-            echo "✅ Archivo schema_lambda.py copiado correctamente"
-          else
-            echo "❌ Error: No se encontró el archivo schema_lambda.py"
-            exit 1
-          fi
-          
-          # Copiar directorios si existen y no están vacíos
-          if [ -d "scripts/endpointsML" ] && [ "$(ls -A scripts/endpointsML)" ]; then
-            cp -r scripts/endpointsML/* terraform/lambda_package/endpointsML/
-            echo "✅ Directorio endpointsML copiado correctamente"
-          else
-            echo "⚠️ Advertencia: El directorio endpointsML está vacío o no existe"
-            touch terraform/lambda_package/endpointsML/.keep
-          fi
-          
-          if [ -d "scripts/endpointsCarAPI" ] && [ "$(ls -A scripts/endpointsCarAPI)" ]; then
-            cp -r scripts/endpointsCarAPI/* terraform/lambda_package/endpointsCarAPI/
-            echo "✅ Directorio endpointsCarAPI copiado correctamente"
-          else
-            echo "⚠️ Advertencia: El directorio endpointsCarAPI está vacío o no existe"
-            touch terraform/lambda_package/endpointsCarAPI/.keep
-          fi
-          
-          # Copiar archivos de base de datos
-          cp scripts/database/db_connector.py terraform/lambda_package/database/
-          cp scripts/database/table_create.py terraform/lambda_package/database/
-          
-          # Instalar dependencias para el generador de schema
-          cd terraform/lambda_package
-          pip install boto3 pymysql pandas requests -t .
-          zip -r ../lambda_function_schema.zip .
-          cd ../..
-          
-          # Instalar dependencias para el cargador de datos
-          cd terraform/lambda_package
-          pip install pandas requests boto3 pymysql -t .
-          zip -r ../lambda_function_data.zip .
-          cd ../..
-
-      - name: Terraform Init (Lambda)
+      - name: Terraform Init
         working-directory: terraform
-        run: |
-          terraform init
-          terraform workspace select lambda || terraform workspace new lambda
+        run: terraform init
 
       - name: Terraform Plan (Lambda)
         working-directory: terraform
@@ -247,11 +179,6 @@ jobs:
         working-directory: terraform
         run: |
           echo "❌ Error en el despliegue de Lambda. Iniciando rollback..."
-          # Inicializar Terraform antes del rollback
-          terraform init
-          terraform workspace select lambda || terraform workspace new lambda
-          
-          # Ejecutar el rollback
           terraform destroy -auto-approve \
             -target=aws_lambda_function.schema_generator \
             -target=aws_lambda_function.db_initializer \
@@ -280,11 +207,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      - name: Terraform Init (ECS)
+      - name: Terraform Init
         working-directory: terraform
-        run: |
-          terraform init
-          terraform workspace select ecs || terraform workspace new ecs
+        run: terraform init
 
       - name: Terraform Plan (ECS)
         working-directory: terraform

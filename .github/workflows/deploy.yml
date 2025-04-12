@@ -46,7 +46,7 @@ jobs:
       - name: Check Existing Resources
         run: |
           # Verificar VPC existente
-          if aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text 2>/dev/null; then
+          if aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query "Vpcs[0].VpcId" --output text 2>/dev/null; then
             echo "VPC ya existe, omitiendo creación..."
             export SKIP_VPC=true
           fi
@@ -92,7 +92,7 @@ jobs:
           echo "🔍 Verificando recursos creados..."
           
           # Verificar VPC
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query "Vpcs[0].VpcId" --output text)
           echo "✅ VPC: $VPC_ID"
           
           # Verificar Subnets
@@ -126,7 +126,7 @@ jobs:
 
       - name: Get VPC ID
         run: |
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query "Vpcs[0].VpcId" --output text)
           echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
 
       - name: Get RDS Endpoint
@@ -182,7 +182,7 @@ jobs:
 
       - name: Get VPC ID
         run: |
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=car-wizard" --query "Vpcs[0].VpcId" --output text)
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query "Vpcs[0].VpcId" --output text)
           echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
 
       - name: Verify Lambda Function

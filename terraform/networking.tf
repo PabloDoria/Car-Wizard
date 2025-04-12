@@ -4,7 +4,12 @@ resource "aws_vpc" "vpc" {
     enable_dns_hostnames = true
     enable_dns_support   = true
 
-    tags = var.common_tags
+    tags = merge(
+        var.common_tags,
+        {
+            Name = "Car-Wizard-VPC"
+        }
+    )
 }
 
 # Subnets públicas

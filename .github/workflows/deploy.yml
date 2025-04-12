@@ -27,9 +27,9 @@ jobs:
         with:
           terraform_version: "1.0.0"
 
-      - name: Cleanup Existing Workspaces
+      - name: Cleanup and Setup Workspace
         run: |
-          # Listar todos los workspaces
+          # Limpiar todos los workspaces excepto default
           for workspace in $(terraform workspace list); do
             if [ "$workspace" != "default" ]; then
               echo "Eliminando workspace: $workspace"
@@ -37,50 +37,37 @@ jobs:
               terraform workspace delete $workspace
             fi
           done
-          # Seleccionar workspace default
+          
+          # Asegurarse de usar el workspace default
           terraform workspace select default || terraform workspace new default
 
       - name: Terraform Init
         run: terraform init
 
-      - name: Check Existing Resources
+      - name: Check and Cleanup Existing Resources
         run: |
-          # Verificar VPC existente
-          if aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query "Vpcs[0].VpcId" --output text 2>/dev/null; then
-            echo "VPC ya existe, omitiendo creación..."
-            export SKIP_VPC=true
-          fi
+          # Verificar y limpiar VPCs duplicadas
+          VPC_IDS=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=Car-Wizard-VPC" --query "Vpcs[*].VpcId" --output text)
+          for vpc_id in $VPC_IDS; do
+            if [ "$vpc_id" != "" ]; then
+              echo "Eliminando VPC duplicada: $vpc_id"
+              aws ec2 delete-vpc --vpc-id $vpc_id
+            fi
+          done
           
-          # Verificar recursos existentes
-          if aws iam get-role --role-name car-wizard-ecs-task-role 2>/dev/null; then
-            echo "IAM Role ya existe, omitiendo creación..."
-            export SKIP_IAM_ROLE=true
-          fi
-          
-          if aws secretsmanager describe-secret --secret-id car-wizard/db-credentials 2>/dev/null; then
-            echo "Secrets Manager Secret ya existe, omitiendo creación..."
-            export SKIP_SECRET=true
-          fi
-          
-          if aws rds describe-db-subnet-groups --db-subnet-group-name car-wizard-rds-subnet-group 2>/dev/null; then
-            echo "RDS Subnet Group ya existe, omitiendo creación..."
-            export SKIP_RDS_SUBNET=true
-          fi
+          # Verificar y limpiar subnets duplicadas
+          SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=tag:Project,Values=car-wizard" --query "Subnets[*].SubnetId" --output text)
+          for subnet_id in $SUBNET_IDS; do
+            if [ "$subnet_id" != "" ]; then
+              echo "Eliminando subnet duplicada: $subnet_id"
+              aws ec2 delete-subnet --subnet-id $subnet_id
+            fi
+          done
 
       - name: Terraform Plan
         run: |
-          # Crear plan sin los recursos que ya existen
-          if [ -n "$SKIP_VPC" ]; then
-            terraform plan -out=tfplan -target="!aws_vpc.vpc"
-          elif [ -n "$SKIP_IAM_ROLE" ]; then
-            terraform plan -out=tfplan -target="!aws_iam_role.ecs_task_role"
-          elif [ -n "$SKIP_SECRET" ]; then
-            terraform plan -out=tfplan -target="!aws_secretsmanager_secret.db_credentials"
-          elif [ -n "$SKIP_RDS_SUBNET" ]; then
-            terraform plan -out=tfplan -target="!aws_db_subnet_group.rds_subnet_group"
-          else
-            terraform plan -out=tfplan
-          fi
+          # Crear plan completo
+          terraform plan -out=tfplan
 
       - name: Terraform Apply
         run: |
@@ -142,14 +129,11 @@ jobs:
       - name: Configure Laravel with Ansible
         run: |
           cd ansible
-          # Crear inventario local
-          cat > inventory.ini << EOL
-          [local]
-          localhost ansible_connection=local
-          EOL
+          
+          # Crear estructura de directorios necesaria
+          mkdir -p roles/docker/templates
           
           # Crear php.ini.j2 en la ubicación correcta
-          mkdir -p roles/docker/templates
           cat > roles/docker/templates/php.ini.j2 << EOL
           [PHP]
           memory_limit = 256M
@@ -158,14 +142,65 @@ jobs:
           max_execution_time = 300
           EOL
           
-          # Verificar que el archivo se creó
-          if [ ! -f roles/docker/templates/php.ini.j2 ]; then
-            echo "Error: No se pudo crear php.ini.j2"
+          # Crear Dockerfile.j2 si no existe
+          if [ ! -f roles/docker/templates/Dockerfile.j2 ]; then
+            cat > roles/docker/templates/Dockerfile.j2 << EOL
+          FROM php:8.1-fpm
+          
+          # Instalar dependencias
+          RUN apt-get update && apt-get install -y \
+              git \
+              curl \
+              libpng-dev \
+              libonig-dev \
+              libxml2-dev \
+              zip \
+              unzip
+          
+          # Limpiar cache
+          RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+          
+          # Instalar extensiones PHP
+          RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd
+          
+          # Obtener composer
+          COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+          
+          # Establecer directorio de trabajo
+          WORKDIR /var/www
+          
+          # Copiar archivos de la aplicación
+          COPY . /var/www
+          
+          # Instalar dependencias
+          RUN composer install --no-dev --optimize-autoloader
+          
+          # Configurar permisos
+          RUN chown -R www-data:www-data /var/www/storage
+          RUN chmod -R 775 /var/www/storage
+          
+          # Exponer puerto
+          EXPOSE 9000
+          
+          # Comando para iniciar PHP-FPM
+          CMD ["php-fpm"]
+          EOL
+          fi
+          
+          # Verificar que los archivos se crearon
+          if [ ! -f roles/docker/templates/php.ini.j2 ] || [ ! -f roles/docker/templates/Dockerfile.j2 ]; then
+            echo "Error: No se pudieron crear los archivos de plantilla"
             exit 1
           fi
           
+          # Crear inventario local
+          cat > inventory.ini << EOL
+          [local]
+          localhost ansible_connection=local
+          EOL
+          
           # Ejecutar playbook con inventario explícito
-          ansible-playbook -i inventory.ini playbooks/laravel.yml
+          ansible-playbook -i inventory.ini playbooks/configure-laravel.yml
 
   verify-lambda:
     needs: deploy

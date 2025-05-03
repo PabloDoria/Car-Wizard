@@ -1,4 +1,4 @@
-# 🚗 CarWizard - Fase III: Ejecición
+# 🚗 CarWizard - Fase III: Ejecución
 
 **📌 Repositorio:** [CarWizard en GitHub](https://github.com/PabloDoria/Car-Wizard)
 

@@ -1,9 +1,9 @@
-# 🚗 CarWizard - Fase III: Ejecución
+# 🚗 CarWizard - Fase VI: Resultados
 
 **📌 Repositorio:** [CarWizard en GitHub](https://github.com/PabloDoria/Car-Wizard)
 
 ## 📖 Descripción
-CarWizard es una página web que permite consultar datos financieros, técnicos y propiedades de autos de marcas populares. Los usuarios pueden filtrar por marca, precio, financiamiento y consumo.
+CarWizard es una página web que permite consultar datos financieros, técnicos y propiedades de autos de marcas populares. Los usuarios pueden filtrar por marca, modelo y año.
 
 ## 🔧 Proceso de Desarrollo
 1. **Obtención de Datos:** Scripts en Python extraen y limpian datos de CAR API.
@@ -19,7 +19,7 @@ CarWizard es una página web que permite consultar datos financieros, técnicos 
 - **ECS Fargate:** Despliegue de contenedores sin servidores.
 - **ECR:** Almacenamiento de imágenes Docker.
 - **ALB (Application Load Balancer):** Balanceo de carga para ECS.
-- **RDS (MySQL):** Base de datos en Amazon RDS con acceso restringido.
+- **RDS (Microsoft SQL Server):** Base de datos en Amazon RDS con acceso restringido.
 - **AWS Lambda:** Procesamiento de datos con Python.
 - **CloudWatch:** Monitoreo y logging de la infraestructura.
 
@@ -52,4 +52,7 @@ CarWizard es una página web que permite consultar datos financieros, técnicos 
 
 
 ---
-🚀 **CarWizard busca diferenciarse mediante gráficos y visuales interpretativos que ayuden a los usuarios a tomar mejores decisiones al comprar un automóvil.**
+
+## 📌 Página web
+![CarWizard en ejecución](./CarWizardImage.png)
+![CarWizard emostrando datos](./CarWizardImage2.png)

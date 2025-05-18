@@ -1,0 +1,135 @@
+:root {
+    --primary-blue: #4366e6;
+    --dark-bg: #1e1e1e;
+}
+
+body {
+    font-family: Arial, sans-serif;
+}
+
+.header-section {
+    background-color: var(--primary-blue);
+    color: white;
+    padding: 2rem 0;
+}
+
+.navbar-brand img {
+    height: 40px;
+}
+
+.navbar {
+    background-color: var(--primary-blue);
+}
+
+.nav-link {
+    color: white !important;
+}
+
+.sell-button {
+    background-color: #e62c4c;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+}
+
+.comparator-section {
+    background-color: var(--dark-bg);
+    color: white;
+    padding: 3rem 0;
+}
+
+.selector-container {
+    margin-bottom: 2rem;
+}
+
+.selector__label {
+    color: var(--text-color);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+.form-select {
+    background-color: var(--card-background);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
+.form-select:disabled {
+    background-color: #1a1a1a;
+    color: #cccccc;
+    opacity: 0.8;
+    cursor: not-allowed;
+    border-color: #383838;
+}
+
+.form-select:disabled option {
+    color: #cccccc;
+}
+
+/* Override Bootstrap's default styling for disabled selects */
+.form-select:disabled::placeholder {
+    color: #cccccc;
+}
+
+.car-selector {
+    border: 2px solid var(--primary-blue);
+    border-radius: 5px;
+    padding: 10px;
+    background-color: #2a2a2a;
+    color: white;
+}
+
+.car-selector option {
+    background-color: #2a2a2a;
+    color: white;
+}
+
+.car-card {
+    background-color: #2a2a2a;
+    border-radius: 8px;
+    text-align: center;
+    padding: 10px;
+    position: relative;
+    margin-bottom: 20px;
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.car-card img {
+    max-width: 100%;
+    max-height: 120px;
+}
+
+.car-number {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+
+.compare-btn {
+    background-color: var(--primary-blue);
+    color: white;
+    border: none;
+    border-radius: 25px;
+    padding: 8px 30px;
+    font-size: 18px;
+    margin-top: 20px;
+}
+
+.breadcrumb-item a {
+    color: white;
+    text-decoration: none;
+}
+
+.footer {
+    background-color: #1a1a1a;
+    color: white;
+    padding: 1rem 0;
+} 

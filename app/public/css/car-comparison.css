@@ -1,0 +1,203 @@
+:root {
+    --primary-color: #4366e6;
+    --secondary-color: #333;
+    --background-color: #121212;
+    --card-background: #222;
+    --text-color: #fff;
+    --muted-text: #aaa;
+    --border-color: #444;
+    --section-header: #333;
+    --item-header: #444;
+}
+
+body {
+    background-color: var(--background-color);
+    color: var(--text-color);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.navbar {
+    background-color: var(--background-color);
+    border-bottom: 1px solid var(--border-color);
+    padding: 15px 0;
+}
+
+.header-section {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 2.5rem 0;
+    margin-bottom: 3rem;
+}
+
+.comparison {
+    padding: 0 0 3rem 0;
+}
+
+.comparison__section {
+    margin-bottom: 2rem;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.comparison__title {
+    background-color: var(--card-background);
+    color: var(--text-color);
+    text-align: center;
+    padding: 12px;
+    margin-bottom: 0;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    font-size: 1.4rem;
+    font-weight: 500;
+}
+
+.comparison__feature {
+    margin-bottom: 1rem;
+}
+
+.comparison__feature-header {
+    background-color: var(--item-header);
+    color: var(--text-color);
+    text-align: center;
+    padding: 10px;
+    margin-bottom: 0;
+    font-weight: 500;
+    font-size: 0.9rem; /* Smaller font size as requested */
+}
+
+.comparison__feature-values {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0;
+}
+
+.comparison__feature-value {
+    flex: 1;
+    text-align: center;
+    padding: 10px;
+    border-right: 1px solid var(--border-color);
+    background-color: var(--card-background);
+}
+
+.comparison__feature-value:last-child {
+    border-right: none;
+}
+
+.car {
+    background-color: var(--card-background);
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    height: 100%;
+    position: relative;
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.car__image {
+    width: 40%;
+    max-width: 120px;
+    height: auto;
+    margin: 0 auto 1rem;
+    object-fit: contain;
+}
+
+.car__title {
+    font-size: 1.2rem;
+    margin-bottom: 0.3rem;
+    color: var(--text-color);
+}
+
+.car__subtitle {
+    color: var(--muted-text);
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.car__price {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: var(--primary-color);
+    margin: 0.5rem 0;
+}
+
+.button {
+    padding: 0.3rem 1rem;
+    border-radius: 5px;
+    margin-top: 0.5rem;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+}
+
+.button--primary {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    display: inline-block;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.button--primary:hover {
+    background-color: #3451b8;
+    color: white;
+}
+
+.button--secondary {
+    background-color: transparent;
+    color: var(--text-color);
+    border: 1px solid var(--primary-color);
+}
+
+.button--secondary:hover {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.button--remove {
+    color: #ff5252;
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 0.8rem;
+    text-decoration: none;
+    margin-top: 0.2rem;
+}
+
+.button--remove:hover {
+    color: #ff0000;
+}
+
+.footer {
+    background-color: var(--secondary-color);
+    color: var(--muted-text);
+    padding: 1.5rem 0;
+    margin-top: 3rem;
+    text-align: center;
+}
+
+.text-success {
+    color: #4caf50 !important;
+}
+
+.text-danger {
+    color: #f44336 !important;
+}
+
+@media (max-width: 767px) {
+    .comparison__feature-values {
+        flex-direction: column;
+    }
+    .comparison__feature-value {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .comparison__feature-value:last-child {
+        border-bottom: none;
+    }
+} 

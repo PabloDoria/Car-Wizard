@@ -1,4 +1,4 @@
-# 🚗 CarWizard - Fase VI: Resultados
+# 🚗 CarWizard - Fase IV: Resultados
 
 **📌 Repositorio:** [CarWizard en GitHub](https://github.com/PabloDoria/Car-Wizard)
 
